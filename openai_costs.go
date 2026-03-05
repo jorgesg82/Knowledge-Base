@@ -13,7 +13,7 @@ import (
 
 var ErrOpenAIAdminKeyNotSet = errors.New("OPENAI_ADMIN_KEY not set")
 
-var openAICostsMinimumStartTime = time.Unix(1, 0).UTC()
+var openAICostsMinimumStartTime = time.Date(2020, time.January, 1, 0, 0, 0, 0, time.UTC)
 
 type OpenAISpendSummary struct {
 	Currency   string
@@ -43,6 +43,10 @@ type openAICostAmount struct {
 	Currency string  `json:"currency"`
 }
 
+type openAIProject struct {
+	CreatedAt int64 `json:"created_at"`
+}
+
 var openAIAdminHTTPClient = &http.Client{Timeout: 20 * time.Second}
 
 func FetchOpenAISpendSummary(now time.Time) (*OpenAISpendSummary, error) {
@@ -55,7 +59,9 @@ func FetchOpenAISpendSummary(now time.Time) (*OpenAISpendSummary, error) {
 	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	last30Start := now.AddDate(0, 0, -30)
 
-	total, currency, err := fetchOpenAICostRange(openAICostsMinimumStartTime, now)
+	totalStart := resolveOpenAICostTotalStartTime()
+
+	total, currency, err := fetchOpenAICostRange(totalStart, now)
 	if err != nil {
 		return nil, err
 	}
@@ -82,6 +88,8 @@ func FetchOpenAISpendSummary(now time.Time) (*OpenAISpendSummary, error) {
 func fetchOpenAICostRange(startTime, endTime time.Time) (float64, string, error) {
 	adminKey := strings.TrimSpace(os.Getenv("OPENAI_ADMIN_KEY"))
 	projectID := strings.TrimSpace(os.Getenv("OPENAI_PROJECT_ID"))
+
+	startTime, endTime = normalizeOpenAICostRange(startTime, endTime)
 
 	startUnix := startTime.Unix()
 	endUnix := endTime.Unix()
@@ -132,6 +140,54 @@ func fetchOpenAICostRange(startTime, endTime time.Time) (float64, string, error)
 	}
 
 	return total, currency, nil
+}
+
+func normalizeOpenAICostRange(startTime, endTime time.Time) (time.Time, time.Time) {
+	startUTC := startTime.UTC()
+	endUTC := endTime.UTC()
+
+	if sameUTCDate(startUTC, endUTC) {
+		nextDayUTC := time.Date(startUTC.Year(), startUTC.Month(), startUTC.Day()+1, 0, 0, 0, 0, time.UTC)
+		if nextDayUTC.After(endTime) {
+			endTime = nextDayUTC
+		}
+	}
+
+	return startTime, endTime
+}
+
+func sameUTCDate(a, b time.Time) bool {
+	return a.Year() == b.Year() && a.Month() == b.Month() && a.Day() == b.Day()
+}
+
+func resolveOpenAICostTotalStartTime() time.Time {
+	projectID := strings.TrimSpace(os.Getenv("OPENAI_PROJECT_ID"))
+	if projectID == "" {
+		return openAICostsMinimumStartTime
+	}
+
+	adminKey := strings.TrimSpace(os.Getenv("OPENAI_ADMIN_KEY"))
+	if adminKey == "" {
+		return openAICostsMinimumStartTime
+	}
+
+	client := newOpenAIClient(adminKey, firstNonEmpty(strings.TrimSpace(os.Getenv("OPENAI_ADMIN_BASE_URL")), strings.TrimSpace(os.Getenv("OPENAI_BASE_URL"))), openAIAdminHTTPClient)
+
+	var project openAIProject
+	if err := client.Get(context.Background(), "/organization/projects/"+url.PathEscape(projectID), nil, &project); err != nil {
+		return openAICostsMinimumStartTime
+	}
+
+	if project.CreatedAt <= 0 {
+		return openAICostsMinimumStartTime
+	}
+
+	projectCreatedAt := time.Unix(project.CreatedAt, 0).UTC()
+	if projectCreatedAt.After(openAICostsMinimumStartTime) {
+		return projectCreatedAt
+	}
+
+	return openAICostsMinimumStartTime
 }
 
 func formatCurrencyAmount(value float64, currency string) string {

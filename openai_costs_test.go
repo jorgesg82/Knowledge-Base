@@ -15,30 +15,47 @@ func TestFetchOpenAISpendSummary(t *testing.T) {
 	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).Unix()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/organization/costs" {
-			t.Fatalf("unexpected path: %s", r.URL.Path)
-		}
-
 		if got := r.Header.Get("Authorization"); got != "Bearer test-admin-key" {
 			t.Fatalf("unexpected authorization header: %q", got)
 		}
 
-		startTime := r.URL.Query().Get("start_time")
-		page := r.URL.Query().Get("page")
-
 		w.Header().Set("Content-Type", "application/json")
 
-		switch {
-		case startTime == fmt.Sprintf("%d", totalStart) && page == "":
-			fmt.Fprint(w, `{"data":[{"results":[{"amount":{"value":5.00,"currency":"usd"}}]}],"has_more":true,"next_page":"page-2"}`)
-		case startTime == fmt.Sprintf("%d", totalStart) && page == "page-2":
-			fmt.Fprint(w, `{"data":[{"results":[{"amount":{"value":7.00,"currency":"usd"}}]}],"has_more":false,"next_page":""}`)
-		case startTime == fmt.Sprintf("%d", last30Start):
-			fmt.Fprint(w, `{"data":[{"results":[{"amount":{"value":3.50,"currency":"usd"}}]}],"has_more":false,"next_page":""}`)
-		case startTime == fmt.Sprintf("%d", dayStart):
-			fmt.Fprint(w, `{"data":[{"results":[{"amount":{"value":0.25,"currency":"usd"}}]}],"has_more":false,"next_page":""}`)
+		switch r.URL.Path {
+		case "/v1/organization/projects/proj_test":
+			fmt.Fprint(w, `{"id":"proj_test","created_at":1577836800}`)
+		case "/v1/organization/costs":
+			startTime := r.URL.Query().Get("start_time")
+			page := r.URL.Query().Get("page")
+			bucketWidth := r.URL.Query().Get("bucket_width")
+			limit := r.URL.Query().Get("limit")
+
+			switch {
+			case startTime == fmt.Sprintf("%d", totalStart) && page == "":
+				if bucketWidth != "1d" || limit != "180" {
+					t.Fatalf("unexpected total query config: bucket_width=%s limit=%s", bucketWidth, limit)
+				}
+				fmt.Fprint(w, `{"data":[{"results":[{"amount":{"value":5.00,"currency":"usd"}}]}],"has_more":true,"next_page":"page-2"}`)
+			case startTime == fmt.Sprintf("%d", totalStart) && page == "page-2":
+				if bucketWidth != "1d" || limit != "180" {
+					t.Fatalf("unexpected total pagination config: bucket_width=%s limit=%s", bucketWidth, limit)
+				}
+				fmt.Fprint(w, `{"data":[{"results":[{"amount":{"value":7.00,"currency":"usd"}}]}],"has_more":false,"next_page":""}`)
+			case startTime == fmt.Sprintf("%d", last30Start):
+				if bucketWidth != "1d" || limit != "180" {
+					t.Fatalf("unexpected last30 query config: bucket_width=%s limit=%s", bucketWidth, limit)
+				}
+				fmt.Fprint(w, `{"data":[{"results":[{"amount":{"value":3.50,"currency":"usd"}}]}],"has_more":false,"next_page":""}`)
+			case startTime == fmt.Sprintf("%d", dayStart):
+				if bucketWidth != "1d" || limit != "180" {
+					t.Fatalf("unexpected today query config: bucket_width=%s limit=%s", bucketWidth, limit)
+				}
+				fmt.Fprint(w, `{"data":[{"results":[{"amount":{"value":0.25,"currency":"usd"}}]}],"has_more":false,"next_page":""}`)
+			default:
+				t.Fatalf("unexpected costs query: start_time=%s page=%s", startTime, page)
+			}
 		default:
-			t.Fatalf("unexpected start_time=%s page=%s", startTime, page)
+			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
 	}))
 	defer server.Close()
@@ -46,7 +63,7 @@ func TestFetchOpenAISpendSummary(t *testing.T) {
 	t.Setenv("OPENAI_ADMIN_KEY", "test-admin-key")
 	t.Setenv("OPENAI_ADMIN_BASE_URL", server.URL)
 	t.Setenv("OPENAI_BASE_URL", "")
-	t.Setenv("OPENAI_PROJECT_ID", "")
+	t.Setenv("OPENAI_PROJECT_ID", "proj_test")
 	t.Setenv("OPENAI_ORG_ID", "")
 
 	summary, err := FetchOpenAISpendSummary(now)
@@ -92,6 +109,45 @@ func TestFetchOpenAISpendSummaryDoesNotUseZeroStartTime(t *testing.T) {
 
 	if _, err := FetchOpenAISpendSummary(now); err != nil {
 		t.Fatalf("FetchOpenAISpendSummary failed: %v", err)
+	}
+}
+
+func TestResolveOpenAICostTotalStartTimeUsesProjectCreationTime(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/organization/projects/proj_test" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"id":"proj_test","created_at":1735689600}`)
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENAI_ADMIN_KEY", "test-admin-key")
+	t.Setenv("OPENAI_ADMIN_BASE_URL", server.URL)
+	t.Setenv("OPENAI_BASE_URL", "")
+	t.Setenv("OPENAI_PROJECT_ID", "proj_test")
+	t.Setenv("OPENAI_ORG_ID", "")
+
+	got := resolveOpenAICostTotalStartTime()
+	want := time.Unix(1735689600, 0).UTC()
+	if !got.Equal(want) {
+		t.Fatalf("expected %s, got %s", want, got)
+	}
+}
+
+func TestNormalizeOpenAICostRangeExtendsSameDayEnd(t *testing.T) {
+	start := time.Date(2026, time.March, 5, 12, 0, 0, 0, time.UTC)
+	end := time.Date(2026, time.March, 5, 18, 0, 0, 0, time.UTC)
+
+	gotStart, gotEnd := normalizeOpenAICostRange(start, end)
+	wantEnd := time.Date(2026, time.March, 6, 0, 0, 0, 0, time.UTC)
+
+	if !gotStart.Equal(start) {
+		t.Fatalf("expected start to remain unchanged, got %s", gotStart)
+	}
+	if !gotEnd.Equal(wantEnd) {
+		t.Fatalf("expected end %s, got %s", wantEnd, gotEnd)
 	}
 }
 
