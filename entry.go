@@ -159,7 +159,7 @@ func GetEntryPath(kbPath, category, title string) string {
 	// Sanitize category to prevent path traversal
 	category = filepath.Clean(category)
 	category = strings.ReplaceAll(category, "..", "")
-	category = strings.Trim(category, "/")
+	category = strings.Trim(category, "/\\")
 	if category == "" || category == "." {
 		category = "misc"
 	}
@@ -175,12 +175,11 @@ func GetEntryPath(kbPath, category, title string) string {
 	filename = filename + ".md"
 
 	// Build path and ensure it's within kbPath
-	fullPath := filepath.Join(kbPath, "entries", category, filename)
+	entriesRoot := filepath.Join(kbPath, "entries")
+	fullPath := filepath.Join(entriesRoot, category, filename)
 
 	// Security check: ensure the resolved path is still under kbPath
-	cleanKB := filepath.Clean(kbPath)
-	cleanFull := filepath.Clean(fullPath)
-	if !strings.HasPrefix(cleanFull, cleanKB) {
+	if !isWithinBase(entriesRoot, fullPath) {
 		// Path traversal attempt detected, use safe default
 		return filepath.Join(kbPath, "entries", "misc", filename)
 	}

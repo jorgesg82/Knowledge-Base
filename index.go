@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -20,6 +21,7 @@ type IndexEntry struct {
 }
 
 type Index struct {
+	mu          sync.RWMutex `json:"-"`
 	Entries     []IndexEntry `json:"entries"`
 	LastUpdated time.Time    `json:"last_updated"`
 }
@@ -52,10 +54,16 @@ func SaveIndex(index *Index, kbPath string) error {
 		return fmt.Errorf("failed to create index directory: %w", err)
 	}
 
+	index.mu.Lock()
 	index.LastUpdated = time.Now()
+	snapshot := Index{
+		Entries:     append([]IndexEntry(nil), index.Entries...),
+		LastUpdated: index.LastUpdated,
+	}
+	index.mu.Unlock()
 
 	indexPath := filepath.Join(indexDir, "index.json")
-	data, err := json.MarshalIndent(index, "", "  ")
+	data, err := json.MarshalIndent(snapshot, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal index: %w", err)
 	}
@@ -65,6 +73,13 @@ func SaveIndex(index *Index, kbPath string) error {
 	}
 
 	return nil
+}
+
+func SnapshotEntries(index *Index) []IndexEntry {
+	index.mu.RLock()
+	defer index.mu.RUnlock()
+
+	return append([]IndexEntry(nil), index.Entries...)
 }
 
 func AddToIndex(index *Index, entry *Entry, kbPath string) {
@@ -80,6 +95,9 @@ func AddToIndex(index *Index, entry *Entry, kbPath string) {
 		Updated:  entry.Metadata.Updated,
 	}
 
+	index.mu.Lock()
+	defer index.mu.Unlock()
+
 	for i, e := range index.Entries {
 		if e.ID == entry.ID {
 			index.Entries[i] = indexEntry
@@ -91,6 +109,9 @@ func AddToIndex(index *Index, entry *Entry, kbPath string) {
 }
 
 func RemoveFromIndex(index *Index, id string) bool {
+	index.mu.Lock()
+	defer index.mu.Unlock()
+
 	for i, e := range index.Entries {
 		if e.ID == id {
 			index.Entries = append(index.Entries[:i], index.Entries[i+1:]...)
@@ -143,18 +164,26 @@ func RebuildIndex(kbPath string) (*Index, error) {
 }
 
 func FindEntryByID(index *Index, id string) *IndexEntry {
+	index.mu.RLock()
+	defer index.mu.RUnlock()
+
 	for i := range index.Entries {
 		if index.Entries[i].ID == id {
-			return &index.Entries[i]
+			entry := index.Entries[i]
+			return &entry
 		}
 	}
 	return nil
 }
 
 func FindEntryByQuery(index *Index, query string) *IndexEntry {
+	index.mu.RLock()
+	defer index.mu.RUnlock()
+
 	for i := range index.Entries {
 		if index.Entries[i].ID == query || index.Entries[i].Title == query {
-			return &index.Entries[i]
+			entry := index.Entries[i]
+			return &entry
 		}
 	}
 	return nil
@@ -163,6 +192,9 @@ func FindEntryByQuery(index *Index, query string) *IndexEntry {
 func FindEntriesByPartialQuery(index *Index, query string) []IndexEntry {
 	var matches []IndexEntry
 	queryLower := strings.ToLower(query)
+
+	index.mu.RLock()
+	defer index.mu.RUnlock()
 
 	for _, entry := range index.Entries {
 		idLower := strings.ToLower(entry.ID)
@@ -196,7 +228,7 @@ func FindEntryWithInference(index *Index, query string) *IndexEntry {
 	}
 
 	// Multiple matches - show selection menu
-	fmt.Printf(Header("Multiple matches found for '%s':") + "\n", query)
+	fmt.Printf(Header("Multiple matches found for '%s':")+"\n", query)
 	for i, entry := range partialMatches {
 		num := Dim(fmt.Sprintf("%d.", i+1))
 		category := Cyan(entry.Category)

@@ -39,6 +39,7 @@ func TestSaveAndLoadConfig(t *testing.T) {
 		Viewer:          "less",
 		DefaultCategory: "test",
 		AutoUpdateIndex: false,
+		PrettyProvider:  "chatgpt",
 		PrettyMode:      "aggressive",
 		PrettyAutoApply: false,
 	}
@@ -69,6 +70,10 @@ func TestSaveAndLoadConfig(t *testing.T) {
 		t.Error("AutoUpdateIndex mismatch")
 	}
 
+	if loaded.PrettyProvider != config.PrettyProvider {
+		t.Errorf("PrettyProvider mismatch: expected %s, got %s", config.PrettyProvider, loaded.PrettyProvider)
+	}
+
 	if loaded.PrettyMode != config.PrettyMode {
 		t.Errorf("PrettyMode mismatch: expected %s, got %s", config.PrettyMode, loaded.PrettyMode)
 	}
@@ -96,8 +101,20 @@ func TestLoadConfigWithDefaults(t *testing.T) {
 		t.Errorf("Expected default category misc, got %s", loaded.DefaultCategory)
 	}
 
+	if !loaded.AutoUpdateIndex {
+		t.Error("Expected default auto_update_index to be true")
+	}
+
+	if loaded.PrettyProvider != "claude" {
+		t.Errorf("Expected default pretty provider claude, got %s", loaded.PrettyProvider)
+	}
+
 	if loaded.PrettyMode != "moderate" {
 		t.Errorf("Expected default pretty mode moderate, got %s", loaded.PrettyMode)
+	}
+
+	if !loaded.PrettyAutoApply {
+		t.Error("Expected default pretty_auto_apply to be true")
 	}
 }
 
@@ -131,6 +148,7 @@ func TestGetKBPath(t *testing.T) {
 	// Change to subdirectory
 	oldWd, _ := os.Getwd()
 	defer os.Chdir(oldWd)
+	t.Setenv("PWD", subDir)
 	os.Chdir(subDir)
 
 	// Should find tmpDir as KB path

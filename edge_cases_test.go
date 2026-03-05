@@ -3,7 +3,9 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -105,34 +107,31 @@ func TestConcurrentIndexOperations(t *testing.T) {
 	tmpDir := t.TempDir()
 	index := &Index{Entries: []IndexEntry{}}
 
-	// Simulate concurrent adds
-	done := make(chan bool)
+	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {
+		wg.Add(1)
 		go func(n int) {
+			defer wg.Done()
+
 			entry := &Entry{
 				Metadata: EntryMetadata{
-					Title:    "Entry " + string(rune(n)),
+					Title:    "Entry " + strconv.Itoa(n),
 					Category: "test",
 					Tags:     []string{"tag"},
 					Created:  time.Now(),
 					Updated:  time.Now(),
 				},
 				FilePath: filepath.Join(tmpDir, "entry.md"),
-				ID:       "test-entry-" + string(rune(n)),
+				ID:       "test-entry-" + strconv.Itoa(n),
 			}
 			AddToIndex(index, entry, tmpDir)
-			done <- true
 		}(i)
 	}
 
-	for i := 0; i < 10; i++ {
-		<-done
-	}
+	wg.Wait()
 
-	// Index might have race conditions - this test exposes them
-	// Should have 10 entries if properly synchronized
 	if len(index.Entries) != 10 {
-		t.Logf("Warning: possible race condition. Expected 10 entries, got %d", len(index.Entries))
+		t.Fatalf("Expected 10 entries, got %d", len(index.Entries))
 	}
 }
 
@@ -396,23 +395,27 @@ func TestSearchWithEmptyQueries(t *testing.T) {
 
 	// Empty tag search
 	results := SearchByTags(index, []string{})
-	// Should return nothing or everything - depends on implementation
+	if len(results) != 1 {
+		t.Errorf("Expected 1 result for empty tag query, got %d", len(results))
+	}
 
 	// Empty category search
 	results = SearchByCategory(index, "")
 	if len(results) != 0 {
-		t.Log("Empty category search returned results")
+		t.Errorf("Expected empty category search to return 0 results, got %d", len(results))
 	}
 
 	// Empty text search
 	results2, _ := SearchByText(index, tmpDir, "")
 	if len(results2) != 0 {
-		t.Log("Empty text search returned results")
+		t.Errorf("Expected empty text search to return 0 results, got %d", len(results2))
 	}
 
 	// Whitespace query
 	results = SearchByCategory(index, "   ")
-	// Should not crash
+	if len(results) != 0 {
+		t.Errorf("Expected whitespace category search to return 0 results, got %d", len(results))
+	}
 }
 
 // Test time edge cases

@@ -15,6 +15,7 @@ type Config struct {
 	Viewer          string `yaml:"viewer"`
 	DefaultCategory string `yaml:"default_category"`
 	AutoUpdateIndex bool   `yaml:"auto_update_index"`
+	PrettyProvider  string `yaml:"pretty_provider"`
 	PrettyMode      string `yaml:"pretty_mode"`
 	PrettyAutoApply bool   `yaml:"pretty_auto_apply"`
 }
@@ -48,6 +49,7 @@ func GetDefaultConfig(kbPath string) *Config {
 		Viewer:          viewer,
 		DefaultCategory: "misc",
 		AutoUpdateIndex: true,
+		PrettyProvider:  "claude",
 		PrettyMode:      "moderate",
 		PrettyAutoApply: true,
 	}
@@ -64,34 +66,13 @@ func LoadConfig(kbPath string) (*Config, error) {
 		return nil, fmt.Errorf("failed to read config: %w", err)
 	}
 
-	var config Config
+	config := *GetDefaultConfig(kbPath)
 	if err := yaml.Unmarshal(data, &config); err != nil {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
 	}
 
 	if config.KBPath == "" {
 		config.KBPath = kbPath
-	}
-	if config.Editor == "" {
-		config.Editor = os.Getenv("EDITOR")
-		if config.Editor == "" {
-			config.Editor = findCommand("nvim", "vim")
-			if config.Editor == "" {
-				config.Editor = "vim"
-			}
-		}
-	}
-	if config.Viewer == "" {
-		config.Viewer = findCommand("glow", "bat", "mdcat", "mdless")
-		if config.Viewer == "" {
-			config.Viewer = "less"
-		}
-	}
-	if config.DefaultCategory == "" {
-		config.DefaultCategory = "misc"
-	}
-	if config.PrettyMode == "" {
-		config.PrettyMode = "moderate"
 	}
 
 	return &config, nil
@@ -117,15 +98,20 @@ func SaveConfig(config *Config, kbPath string) error {
 }
 
 func GetKBPath() (string, error) {
-	cwd, err := os.Getwd()
+	cwd, err := workingDirectory()
 	if err != nil {
 		return "", err
 	}
 
-	for dir := cwd; dir != "/" && dir != "."; dir = filepath.Dir(dir) {
+	for dir := cwd; ; dir = filepath.Dir(dir) {
 		kbDir := filepath.Join(dir, ".kb")
 		if _, err := os.Stat(kbDir); err == nil {
 			return dir, nil
+		}
+
+		parentDir := filepath.Dir(dir)
+		if parentDir == dir {
+			break
 		}
 	}
 

@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -174,6 +175,50 @@ func TestSearchByText(t *testing.T) {
 
 	if len(results) < 2 {
 		t.Errorf("Expected at least 2 results for 'SSH' (case insensitive), got %d", len(results))
+	}
+}
+
+func TestSearchByTextLongLine(t *testing.T) {
+	tmpDir := t.TempDir()
+	entriesDir := filepath.Join(tmpDir, "entries", "test")
+	os.MkdirAll(entriesDir, 0755)
+
+	longLine := strings.Repeat("x", 70*1024) + " needle " + strings.Repeat("y", 70*1024)
+	entryPath := filepath.Join(entriesDir, "long-line.md")
+	entry := &Entry{
+		Metadata: EntryMetadata{
+			Title:    "Long Line",
+			Category: "test",
+			Created:  time.Now(),
+			Updated:  time.Now(),
+		},
+		Content:  "# Long Line\n\n" + longLine,
+		FilePath: entryPath,
+		ID:       "test-long-line",
+	}
+
+	if err := WriteEntry(entry, entryPath); err != nil {
+		t.Fatalf("Failed to write long-line entry: %v", err)
+	}
+
+	index := &Index{Entries: []IndexEntry{}}
+	AddToIndex(index, entry, tmpDir)
+
+	results, err := SearchByText(index, tmpDir, "needle")
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+
+	if len(results) != 1 {
+		t.Fatalf("Expected 1 result for long line search, got %d", len(results))
+	}
+
+	if results[0].LineNumber <= 0 {
+		t.Errorf("Expected a positive line number, got %d", results[0].LineNumber)
+	}
+
+	if !strings.Contains(results[0].Line, "needle") {
+		t.Errorf("Expected result line to contain search term, got %q", results[0].Line)
 	}
 }
 

@@ -11,7 +11,7 @@ import (
 func SearchByTags(index *Index, tags []string) []IndexEntry {
 	var results []IndexEntry
 
-	for _, entry := range index.Entries {
+	for _, entry := range SnapshotEntries(index) {
 		matchCount := 0
 		for _, searchTag := range tags {
 			for _, entryTag := range entry.Tags {
@@ -32,7 +32,7 @@ func SearchByTags(index *Index, tags []string) []IndexEntry {
 func SearchByCategory(index *Index, category string) []IndexEntry {
 	var results []IndexEntry
 
-	for _, entry := range index.Entries {
+	for _, entry := range SnapshotEntries(index) {
 		if strings.EqualFold(entry.Category, category) {
 			results = append(results, entry)
 		}
@@ -49,9 +49,12 @@ type SearchResult struct {
 
 func SearchByText(index *Index, kbPath, text string) ([]SearchResult, error) {
 	var results []SearchResult
-	searchLower := strings.ToLower(text)
+	searchLower := strings.ToLower(strings.TrimSpace(text))
+	if searchLower == "" {
+		return results, nil
+	}
 
-	for _, entry := range index.Entries {
+	for _, entry := range SnapshotEntries(index) {
 		entryPath := filepath.Join(kbPath, entry.Path)
 		file, err := os.Open(entryPath)
 		if err != nil {
@@ -59,6 +62,7 @@ func SearchByText(index *Index, kbPath, text string) ([]SearchResult, error) {
 		}
 
 		scanner := bufio.NewScanner(file)
+		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		lineNum := 0
 		for scanner.Scan() {
 			lineNum++
@@ -71,6 +75,10 @@ func SearchByText(index *Index, kbPath, text string) ([]SearchResult, error) {
 				})
 			}
 		}
+		if err := scanner.Err(); err != nil {
+			file.Close()
+			return nil, fmt.Errorf("failed to scan %s: %w", entryPath, err)
+		}
 		file.Close()
 	}
 
@@ -80,7 +88,7 @@ func SearchByText(index *Index, kbPath, text string) ([]SearchResult, error) {
 func GetAllTags(index *Index) map[string]int {
 	tagCounts := make(map[string]int)
 
-	for _, entry := range index.Entries {
+	for _, entry := range SnapshotEntries(index) {
 		for _, tag := range entry.Tags {
 			tagCounts[tag]++
 		}
@@ -92,7 +100,7 @@ func GetAllTags(index *Index) map[string]int {
 func GetAllCategories(index *Index) map[string]int {
 	categoryCounts := make(map[string]int)
 
-	for _, entry := range index.Entries {
+	for _, entry := range SnapshotEntries(index) {
 		categoryCounts[entry.Category]++
 	}
 
