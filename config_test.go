@@ -25,6 +25,10 @@ func TestGetDefaultConfig(t *testing.T) {
 		t.Errorf("Expected PrettyMode moderate, got %s", config.PrettyMode)
 	}
 
+	if config.PrettyProvider != "auto" {
+		t.Errorf("Expected PrettyProvider auto, got %s", config.PrettyProvider)
+	}
+
 	if !config.PrettyAutoApply {
 		t.Error("Expected PrettyAutoApply to be true")
 	}
@@ -105,8 +109,8 @@ func TestLoadConfigWithDefaults(t *testing.T) {
 		t.Error("Expected default auto_update_index to be true")
 	}
 
-	if loaded.PrettyProvider != "claude" {
-		t.Errorf("Expected default pretty provider claude, got %s", loaded.PrettyProvider)
+	if loaded.PrettyProvider != "auto" {
+		t.Errorf("Expected default pretty provider auto, got %s", loaded.PrettyProvider)
 	}
 
 	if loaded.PrettyMode != "moderate" {
@@ -155,6 +159,82 @@ func TestGetKBPath(t *testing.T) {
 	kbPath, err := GetKBPath()
 	if err != nil {
 		t.Fatalf("Failed to get KB path: %v", err)
+	}
+
+	if kbPath != tmpDir {
+		t.Errorf("Expected KB path %s, got %s", tmpDir, kbPath)
+	}
+}
+
+func TestLoadConfigAppliesEnvironmentOverrides(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	configPath := filepath.Join(tmpDir, ".kb", "config.yml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+		t.Fatalf("Failed to create config directory: %v", err)
+	}
+	if err := os.WriteFile(configPath, []byte("editor: vim\nviewer: less\npretty_provider: claude\n"), 0644); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+
+	t.Setenv("KB_EDITOR", "nvim")
+	t.Setenv("KB_VIEWER", "batcat")
+	t.Setenv("KB_DEFAULT_CATEGORY", "work")
+	t.Setenv("KB_PRETTY_PROVIDER", "chatgpt")
+	t.Setenv("KB_PRETTY_MODE", "aggressive")
+	t.Setenv("KB_AUTO_UPDATE_INDEX", "false")
+	t.Setenv("KB_PRETTY_AUTO_APPLY", "false")
+
+	loaded, err := LoadConfig(tmpDir)
+	if err != nil {
+		t.Fatalf("Failed to load config with overrides: %v", err)
+	}
+
+	if loaded.Editor != "nvim" {
+		t.Errorf("Expected editor nvim, got %s", loaded.Editor)
+	}
+	if loaded.Viewer != "batcat" {
+		t.Errorf("Expected viewer batcat, got %s", loaded.Viewer)
+	}
+	if loaded.DefaultCategory != "work" {
+		t.Errorf("Expected default category work, got %s", loaded.DefaultCategory)
+	}
+	if loaded.PrettyProvider != "chatgpt" {
+		t.Errorf("Expected provider chatgpt, got %s", loaded.PrettyProvider)
+	}
+	if loaded.PrettyMode != "aggressive" {
+		t.Errorf("Expected mode aggressive, got %s", loaded.PrettyMode)
+	}
+	if loaded.AutoUpdateIndex {
+		t.Error("Expected auto_update_index to be false after override")
+	}
+	if loaded.PrettyAutoApply {
+		t.Error("Expected pretty_auto_apply to be false after override")
+	}
+	if loaded.KBPath != tmpDir {
+		t.Errorf("Expected KB path %s, got %s", tmpDir, loaded.KBPath)
+	}
+}
+
+func TestGetKBPathUsesEnvironmentOverride(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmpDir, ".kb"), 0755); err != nil {
+		t.Fatalf("Failed to create .kb directory: %v", err)
+	}
+
+	oldWd, _ := os.Getwd()
+	defer os.Chdir(oldWd)
+
+	otherDir := t.TempDir()
+	if err := os.Chdir(otherDir); err != nil {
+		t.Fatalf("Failed to change directory: %v", err)
+	}
+	t.Setenv("PWD", otherDir)
+	t.Setenv("KB_PATH", tmpDir)
+
+	kbPath, err := GetKBPath()
+	if err != nil {
+		t.Fatalf("Failed to get KB path from KB_PATH: %v", err)
 	}
 
 	if kbPath != tmpDir {

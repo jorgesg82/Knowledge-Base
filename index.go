@@ -26,6 +26,11 @@ type Index struct {
 	LastUpdated time.Time    `json:"last_updated"`
 }
 
+type persistedIndex struct {
+	Entries     []IndexEntry `json:"entries"`
+	LastUpdated time.Time    `json:"last_updated"`
+}
+
 func LoadIndex(kbPath string) (*Index, error) {
 	indexPath := filepath.Join(kbPath, ".kb", "index.json")
 
@@ -40,12 +45,15 @@ func LoadIndex(kbPath string) (*Index, error) {
 		return nil, fmt.Errorf("failed to read index: %w", err)
 	}
 
-	var index Index
-	if err := json.Unmarshal(data, &index); err != nil {
+	var stored persistedIndex
+	if err := json.Unmarshal(data, &stored); err != nil {
 		return nil, fmt.Errorf("failed to parse index: %w", err)
 	}
 
-	return &index, nil
+	return &Index{
+		Entries:     stored.Entries,
+		LastUpdated: stored.LastUpdated,
+	}, nil
 }
 
 func SaveIndex(index *Index, kbPath string) error {
@@ -56,7 +64,7 @@ func SaveIndex(index *Index, kbPath string) error {
 
 	index.mu.Lock()
 	index.LastUpdated = time.Now()
-	snapshot := Index{
+	snapshot := persistedIndex{
 		Entries:     append([]IndexEntry(nil), index.Entries...),
 		LastUpdated: index.LastUpdated,
 	}

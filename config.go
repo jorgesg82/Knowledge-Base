@@ -5,6 +5,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -29,16 +31,75 @@ func findCommand(names ...string) string {
 	return ""
 }
 
+func defaultEditorCandidates() []string {
+	return []string{"nvim", "vim", "nano"}
+}
+
+func defaultViewerCandidates() []string {
+	switch currentGOOS {
+	case "linux":
+		return []string{"glow", "bat", "batcat", "mdcat", "mdless"}
+	default:
+		return []string{"glow", "bat", "mdcat", "batcat", "mdless"}
+	}
+}
+
+func parseEnvBool(name string) (bool, bool, error) {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return false, false, nil
+	}
+
+	value, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, true, fmt.Errorf("invalid %s value %q", name, raw)
+	}
+
+	return value, true, nil
+}
+
+func applyConfigEnvOverrides(config *Config) error {
+	if editor := strings.TrimSpace(os.Getenv("KB_EDITOR")); editor != "" {
+		config.Editor = editor
+	}
+	if viewer := strings.TrimSpace(os.Getenv("KB_VIEWER")); viewer != "" {
+		config.Viewer = viewer
+	}
+	if category := strings.TrimSpace(os.Getenv("KB_DEFAULT_CATEGORY")); category != "" {
+		config.DefaultCategory = category
+	}
+	if provider := strings.TrimSpace(os.Getenv("KB_PRETTY_PROVIDER")); provider != "" {
+		config.PrettyProvider = provider
+	}
+	if mode := strings.TrimSpace(os.Getenv("KB_PRETTY_MODE")); mode != "" {
+		config.PrettyMode = mode
+	}
+
+	if autoUpdateIndex, ok, err := parseEnvBool("KB_AUTO_UPDATE_INDEX"); err != nil {
+		return err
+	} else if ok {
+		config.AutoUpdateIndex = autoUpdateIndex
+	}
+
+	if autoApply, ok, err := parseEnvBool("KB_PRETTY_AUTO_APPLY"); err != nil {
+		return err
+	} else if ok {
+		config.PrettyAutoApply = autoApply
+	}
+
+	return nil
+}
+
 func GetDefaultConfig(kbPath string) *Config {
 	editor := os.Getenv("EDITOR")
 	if editor == "" {
-		editor = findCommand("nvim", "vim")
+		editor = findCommand(defaultEditorCandidates()...)
 		if editor == "" {
 			editor = "vim"
 		}
 	}
 
-	viewer := findCommand("glow", "bat", "mdcat", "mdless")
+	viewer := findCommand(defaultViewerCandidates()...)
 	if viewer == "" {
 		viewer = "less"
 	}
@@ -49,7 +110,7 @@ func GetDefaultConfig(kbPath string) *Config {
 		Viewer:          viewer,
 		DefaultCategory: "misc",
 		AutoUpdateIndex: true,
-		PrettyProvider:  "claude",
+		PrettyProvider:  defaultPrettyProvider(),
 		PrettyMode:      "moderate",
 		PrettyAutoApply: true,
 	}
@@ -61,7 +122,12 @@ func LoadConfig(kbPath string) (*Config, error) {
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return GetDefaultConfig(kbPath), nil
+			config := GetDefaultConfig(kbPath)
+			if err := applyConfigEnvOverrides(config); err != nil {
+				return nil, err
+			}
+			config.KBPath = kbPath
+			return config, nil
 		}
 		return nil, fmt.Errorf("failed to read config: %w", err)
 	}
@@ -71,8 +137,10 @@ func LoadConfig(kbPath string) (*Config, error) {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
 	}
 
-	if config.KBPath == "" {
-		config.KBPath = kbPath
+	config.KBPath = kbPath
+
+	if err := applyConfigEnvOverrides(&config); err != nil {
+		return nil, err
 	}
 
 	return &config, nil
@@ -112,6 +180,12 @@ func GetKBPath() (string, error) {
 		parentDir := filepath.Dir(dir)
 		if parentDir == dir {
 			break
+		}
+	}
+
+	if envKBPath := strings.TrimSpace(os.Getenv("KB_PATH")); envKBPath != "" {
+		if _, err := os.Stat(filepath.Join(envKBPath, ".kb")); err == nil {
+			return envKBPath, nil
 		}
 	}
 

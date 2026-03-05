@@ -20,6 +20,7 @@ import (
 type PrettyProvider string
 
 const (
+	ProviderAuto    PrettyProvider = "auto"
 	ProviderClaude  PrettyProvider = "claude"
 	ProviderChatGPT PrettyProvider = "chatgpt"
 )
@@ -68,13 +69,28 @@ func ParsePrettyMode(mode string) (PrettyMode, error) {
 
 func ParsePrettyProvider(provider string) (PrettyProvider, error) {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "", string(ProviderClaude):
+	case "", string(ProviderAuto):
+		return ProviderAuto, nil
+	case string(ProviderClaude):
 		return ProviderClaude, nil
 	case string(ProviderChatGPT), "openai":
 		return ProviderChatGPT, nil
 	default:
-		return "", fmt.Errorf("invalid provider: %s. Use: claude or chatgpt", provider)
+		return "", fmt.Errorf("invalid provider: %s. Use: auto, claude, or chatgpt", provider)
 	}
+}
+
+func ResolvePrettyProvider(provider string) (PrettyProvider, error) {
+	prettyProvider, err := ParsePrettyProvider(provider)
+	if err != nil {
+		return "", err
+	}
+
+	if prettyProvider == ProviderAuto {
+		return detectPrettyProvider(), nil
+	}
+
+	return prettyProvider, nil
 }
 
 func getSystemPrompt(mode PrettyMode) string {
@@ -131,7 +147,7 @@ Mode: AGGRESSIVE - Format + expand explanations
 }
 
 func PrettifyEntry(content string, mode PrettyMode, provider string) (string, error) {
-	prettyProvider, err := ParsePrettyProvider(provider)
+	prettyProvider, err := ResolvePrettyProvider(provider)
 	if err != nil {
 		return "", err
 	}
@@ -161,7 +177,7 @@ func prettifyWithClaude(content string, mode PrettyMode) (string, error) {
 		model = strings.TrimSpace(os.Getenv("ANTHROPIC_DEFAULT_SONNET_MODEL"))
 	}
 	if model == "" {
-		model = "@vertexai-global/anthropic.claude-sonnet-4-5@20250929"
+		model = defaultClaudeModel()
 	}
 
 	reqBody := ClaudeRequest{
@@ -234,7 +250,7 @@ func prettifyWithOpenAI(content string, mode PrettyMode) (string, error) {
 
 	model := strings.TrimSpace(os.Getenv("OPENAI_MODEL"))
 	if model == "" {
-		model = "gpt-5"
+		model = defaultOpenAIModel()
 	}
 
 	client := newOpenAIClient(apiKey, strings.TrimSpace(os.Getenv("OPENAI_BASE_URL")), openAIHTTPClient)

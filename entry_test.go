@@ -183,6 +183,46 @@ Content
 	}
 }
 
+func TestParseEntryWithTripleDashInsideFrontmatterValue(t *testing.T) {
+	tmpDir := t.TempDir()
+	entryPath := filepath.Join(tmpDir, "test.md")
+
+	content := `---
+title: Test
+description: contains --- inside
+tags: [one, two]
+category: docs
+created: 2026-03-06T00:00:00Z
+updated: 2026-03-06T00:00:00Z
+---
+
+# Test
+
+Body here.
+`
+	if err := os.WriteFile(entryPath, []byte(content), 0644); err != nil {
+		t.Fatalf("Failed to write entry: %v", err)
+	}
+
+	parsed, err := ParseEntry(entryPath)
+	if err != nil {
+		t.Fatalf("Failed to parse entry: %v", err)
+	}
+
+	if parsed.Metadata.Category != "docs" {
+		t.Errorf("Expected category docs, got %s", parsed.Metadata.Category)
+	}
+	if len(parsed.Metadata.Tags) != 2 {
+		t.Fatalf("Expected 2 tags, got %d", len(parsed.Metadata.Tags))
+	}
+	if parsed.Metadata.Tags[0] != "one" || parsed.Metadata.Tags[1] != "two" {
+		t.Errorf("Unexpected tags: %v", parsed.Metadata.Tags)
+	}
+	if parsed.Metadata.Created.IsZero() || parsed.Metadata.Updated.IsZero() {
+		t.Error("Expected created and updated timestamps to be preserved")
+	}
+}
+
 func TestGetEntryPath(t *testing.T) {
 	kbPath := "/test/kb"
 

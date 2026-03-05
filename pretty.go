@@ -11,6 +11,8 @@ type PrettyOptions struct {
 	Mode       PrettyMode
 	Provider   PrettyProvider
 	AutoApply  bool
+	DryRun     bool
+	ShowDiff   bool
 	ProcessAll bool
 	Query      string
 }
@@ -58,6 +60,10 @@ func parsePrettyOptions(args []string, config *Config) (*PrettyOptions, error) {
 			i++
 		case "--confirm":
 			options.AutoApply = false
+		case "--dry-run":
+			options.DryRun = true
+		case "--diff":
+			options.ShowDiff = true
 		case "--all":
 			options.ProcessAll = true
 		default:
@@ -101,7 +107,7 @@ func handlePretty(args []string) {
 	}
 
 	if options.ProcessAll {
-		prettifyAll(index, kbPath, options)
+		prettifyAll(config, index, kbPath, options)
 		return
 	}
 
@@ -112,10 +118,10 @@ func handlePretty(args []string) {
 		os.Exit(1)
 	}
 
-	prettifyOne(index, kbPath, options.Query, options)
+	prettifyOne(config, index, kbPath, options.Query, options)
 }
 
-func prettifyOne(index *Index, kbPath, query string, options *PrettyOptions) {
+func prettifyOne(config *Config, index *Index, kbPath, query string, options *PrettyOptions) {
 	indexEntry := FindEntryWithInference(index, query)
 	if indexEntry == nil {
 		printError("No entry found matching: %s", query)
@@ -123,8 +129,13 @@ func prettifyOne(index *Index, kbPath, query string, options *PrettyOptions) {
 	}
 
 	entryPath := filepath.Join(kbPath, indexEntry.Path)
+	provider, err := resolvedPrettyProviderName(string(options.Provider))
+	if err != nil {
+		printError("%v", err)
+		os.Exit(1)
+	}
 
-	printInfo("Prettifying: %s (%s mode, %s)", indexEntry.Title, options.Mode, options.Provider)
+	printInfo("Prettifying: %s (%s mode, %s)", indexEntry.Title, options.Mode, provider)
 
 	content, err := os.ReadFile(entryPath)
 	if err != nil {
@@ -138,11 +149,19 @@ func prettifyOne(index *Index, kbPath, query string, options *PrettyOptions) {
 		os.Exit(1)
 	}
 
+	previewPrettyResult(indexEntry.Title, string(content), improved, options)
+
+	if strings.TrimSpace(improved) == strings.TrimSpace(string(content)) {
+		printInfo("No changes suggested for %s", indexEntry.Title)
+		return
+	}
+
+	if options.DryRun {
+		printInfo("Dry run: no changes written")
+		return
+	}
+
 	if !options.AutoApply {
-		fmt.Println("\n" + Header("Preview of changes:"))
-		fmt.Println(Dim("────────────────────────────────────────"))
-		fmt.Println(improved)
-		fmt.Println(Dim("────────────────────────────────────────"))
 		fmt.Print("\n" + Highlight("Apply these changes? (y/N): "))
 		var response string
 		fmt.Scanln(&response)
@@ -161,17 +180,22 @@ func prettifyOne(index *Index, kbPath, query string, options *PrettyOptions) {
 	if err != nil {
 		printWarning("Failed to parse entry after prettifying: %v", err)
 	} else {
-		AddToIndex(index, entry, kbPath)
-		if err := SaveIndex(index, kbPath); err != nil {
+		if err := refreshIndexFromEntry(config, index, kbPath, entry); err != nil {
 			printWarning("Failed to update index: %v", err)
 		}
 	}
+	warnIfIndexSkipped(config)
 
 	printSuccess("Prettified: %s", indexEntry.Title)
 }
 
-func prettifyAll(index *Index, kbPath string, options *PrettyOptions) {
+func prettifyAll(config *Config, index *Index, kbPath string, options *PrettyOptions) {
 	entries := SnapshotEntries(index)
+	provider, err := resolvedPrettyProviderName(string(options.Provider))
+	if err != nil {
+		printError("%v", err)
+		os.Exit(1)
+	}
 
 	if !options.AutoApply {
 		fmt.Printf(Warning("This will prettify ALL %d entries. Continue? (y/N): "), len(entries))
@@ -183,7 +207,7 @@ func prettifyAll(index *Index, kbPath string, options *PrettyOptions) {
 		}
 	}
 
-	printInfo("Prettifying all entries (%s mode, %s)...", options.Mode, options.Provider)
+	printInfo("Prettifying all entries (%s mode, %s)...", options.Mode, provider)
 
 	successCount := 0
 	failCount := 0
@@ -210,6 +234,20 @@ func prettifyAll(index *Index, kbPath string, options *PrettyOptions) {
 			continue
 		}
 
+		previewPrettyResult(indexEntry.Title, string(content), improved, options)
+
+		if strings.TrimSpace(improved) == strings.TrimSpace(string(content)) {
+			fmt.Println(Gray("UNCHANGED"))
+			successCount++
+			continue
+		}
+
+		if options.DryRun {
+			fmt.Println(Cyan("DRY-RUN"))
+			successCount++
+			continue
+		}
+
 		if err := os.WriteFile(entryPath, []byte(improved), 0644); err != nil {
 			fmt.Println(Red("FAILED"))
 			printError("  Failed to write: %v", err)
@@ -218,7 +256,7 @@ func prettifyAll(index *Index, kbPath string, options *PrettyOptions) {
 		}
 
 		entry, err := ParseEntry(entryPath)
-		if err == nil {
+		if err == nil && shouldAutoUpdateIndex(config) {
 			AddToIndex(index, entry, kbPath)
 		}
 
@@ -226,10 +264,37 @@ func prettifyAll(index *Index, kbPath string, options *PrettyOptions) {
 		successCount++
 	}
 
-	if err := SaveIndex(index, kbPath); err != nil {
-		printWarning("Failed to save index: %v", err)
+	if shouldAutoUpdateIndex(config) {
+		if err := SaveIndex(index, kbPath); err != nil {
+			printWarning("Failed to save index: %v", err)
+		}
+	} else {
+		warnIfIndexSkipped(config)
 	}
 
 	fmt.Println()
 	printSuccess("Completed: %d succeeded, %d failed", successCount, failCount)
+}
+
+func previewPrettyResult(title, current, improved string, options *PrettyOptions) {
+	if !options.DryRun && !options.ShowDiff && options.AutoApply {
+		return
+	}
+
+	fmt.Printf("\n%s %s\n", Header("Preview:"), Bold(title))
+	if options.ShowDiff {
+		diff, err := buildUnifiedDiff(current, improved)
+		if err != nil {
+			printWarning("Failed to render diff: %v", err)
+		} else if strings.TrimSpace(diff) == "" {
+			fmt.Println(Dim("No textual changes"))
+		} else {
+			fmt.Print(diff)
+		}
+		return
+	}
+
+	fmt.Println(Dim("────────────────────────────────────────"))
+	fmt.Println(improved)
+	fmt.Println(Dim("────────────────────────────────────────"))
 }

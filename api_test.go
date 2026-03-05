@@ -11,7 +11,7 @@ import (
 
 func TestParsePrettyOptions(t *testing.T) {
 	config := &Config{
-		PrettyProvider:  "claude",
+		PrettyProvider:  "auto",
 		PrettyMode:      "moderate",
 		PrettyAutoApply: true,
 	}
@@ -35,6 +35,16 @@ func TestParsePrettyOptions(t *testing.T) {
 
 	if options.AutoApply {
 		t.Error("Expected --confirm to disable auto-apply")
+	}
+}
+
+func TestParsePrettyProviderAuto(t *testing.T) {
+	provider, err := ParsePrettyProvider("auto")
+	if err != nil {
+		t.Fatalf("ParsePrettyProvider failed: %v", err)
+	}
+	if provider != ProviderAuto {
+		t.Fatalf("expected auto provider, got %s", provider)
 	}
 }
 
@@ -145,5 +155,31 @@ func TestPrettifyEntryChatGPT(t *testing.T) {
 
 	if !strings.Contains(result, "# Improved via ChatGPT") {
 		t.Errorf("Expected ChatGPT prettify result to contain improved content, got %s", result)
+	}
+}
+
+func TestPrettifyEntryChatGPTUsesDefaultModel(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var reqBody map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+			t.Fatalf("Failed to decode OpenAI request: %v", err)
+		}
+		if reqBody["model"] != defaultOpenAIModel() {
+			t.Fatalf("expected default model %s, got %v", defaultOpenAIModel(), reqBody["model"])
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"id":"resp_123","object":"response","status":"completed","model":"gpt-test","output":[{"id":"msg_123","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"ok","annotations":[]}]}]}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENAI_BASE_URL", server.URL)
+	t.Setenv("OPENAI_API_KEY", "test-openai-key")
+	t.Setenv("OPENAI_MODEL", "")
+	t.Setenv("OPENAI_PROJECT_ID", "")
+
+	if _, err := PrettifyEntry("---\ntitle: Test\n---\n\n# Test", ModeConservative, "chatgpt"); err != nil {
+		t.Fatalf("PrettifyEntry failed: %v", err)
 	}
 }

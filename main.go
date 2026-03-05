@@ -30,13 +30,16 @@ Usage:
   kb import <tarball>         Import KB from tarball
   kb stats                    Show KB statistics
   kb config                   Show configuration
+  kb doctor                   Check local KB/runtime health
   kb rebuild                  Rebuild index from entries
   kb clean                    Remove KB from current directory
 
 Pretty options:
   --mode <mode>               Set mode: conservative, moderate, aggressive
-  --provider <name>           Set AI provider: claude or chatgpt
+  --provider <name>           Set AI provider: auto, claude, or chatgpt
   --confirm                   Ask for confirmation before applying
+  --dry-run                   Preview without writing changes
+  --diff                      Show a unified diff of the proposed changes
 
 Examples:
   kb init ~/my-kb
@@ -150,18 +153,7 @@ func handleAdd(args []string) {
 		os.Exit(1)
 	}
 
-	// Use nvim with custom kb config
-	nvimConfig := filepath.Join(kbPath, ".kb", "nvim.lua")
-	var cmd *exec.Cmd
-
-	// Check if custom nvim config exists
-	if _, err := os.Stat(nvimConfig); err == nil {
-		// Use nvim with custom config
-		cmd = exec.Command("nvim", "-u", nvimConfig, entryPath)
-	} else {
-		// Fallback to configured editor
-		cmd = exec.Command(config.Editor, entryPath)
-	}
+	cmd := buildEditorCommand(config, kbPath, entryPath)
 
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -178,17 +170,11 @@ func handleAdd(args []string) {
 		return
 	}
 
-	index, err := LoadIndex(kbPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading index: %v\n", err)
-		os.Exit(1)
-	}
-
-	AddToIndex(index, entry, kbPath)
-	if err := SaveIndex(index, kbPath); err != nil {
+	if err := updateIndexWithEntry(config, kbPath, entry); err != nil {
 		fmt.Fprintf(os.Stderr, "Error saving index: %v\n", err)
 		os.Exit(1)
 	}
+	warnIfIndexSkipped(config)
 
 	printSuccess("Created entry: %s/%s", category, entry.ID)
 }
@@ -227,18 +213,7 @@ func handleEdit(args []string) {
 
 	entryPath := filepath.Join(kbPath, indexEntry.Path)
 
-	// Use nvim with custom kb config
-	nvimConfig := filepath.Join(kbPath, ".kb", "nvim.lua")
-	var cmd *exec.Cmd
-
-	// Check if custom nvim config exists
-	if _, err := os.Stat(nvimConfig); err == nil {
-		// Use nvim with custom config
-		cmd = exec.Command("nvim", "-u", nvimConfig, entryPath)
-	} else {
-		// Fallback to configured editor
-		cmd = exec.Command(config.Editor, entryPath)
-	}
+	cmd := buildEditorCommand(config, kbPath, entryPath)
 
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -255,11 +230,11 @@ func handleEdit(args []string) {
 		return
 	}
 
-	AddToIndex(index, entry, kbPath)
-	if err := SaveIndex(index, kbPath); err != nil {
+	if err := refreshIndexFromEntry(config, index, kbPath, entry); err != nil {
 		fmt.Fprintf(os.Stderr, "Error saving index: %v\n", err)
 		os.Exit(1)
 	}
+	warnIfIndexSkipped(config)
 
 	printSuccess("Entry updated")
 }
@@ -305,7 +280,7 @@ func handleShow(args []string) {
 	switch viewerBase {
 	case "glow":
 		cmd = exec.Command(config.Viewer, "-p", entryPath)
-	case "bat":
+	case "bat", "batcat":
 		cmd = exec.Command(config.Viewer, "--paging=always", entryPath)
 	case "mdcat":
 		// mdcat doesn't have a built-in pager, pipe to less
@@ -371,6 +346,12 @@ func handleRm(args []string) {
 		os.Exit(1)
 	}
 
+	config, err := LoadConfig(kbPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+		os.Exit(1)
+	}
+
 	query := args[0]
 	indexEntry := FindEntryWithInference(index, query)
 	if indexEntry == nil {
@@ -384,11 +365,11 @@ func handleRm(args []string) {
 		os.Exit(1)
 	}
 
-	RemoveFromIndex(index, indexEntry.ID)
-	if err := SaveIndex(index, kbPath); err != nil {
+	if err := removeEntryFromIndex(config, kbPath, indexEntry.ID); err != nil {
 		fmt.Fprintf(os.Stderr, "Error saving index: %v\n", err)
 		os.Exit(1)
 	}
+	warnIfIndexSkipped(config)
 
 	printSuccess("Removed entry: %s", indexEntry.ID)
 }
@@ -411,7 +392,7 @@ func handleList(args []string) {
 		category := args[0]
 		results = SearchByCategory(index, category)
 	} else {
-		results = index.Entries
+		results = SnapshotEntries(index)
 	}
 
 	PrintSearchResults(results, "")
@@ -606,11 +587,7 @@ func printOpenAISpendStats(config *Config) {
 	}
 
 	if errors.Is(err, ErrOpenAIAdminKeyNotSet) {
-		usesOpenAI := strings.TrimSpace(os.Getenv("OPENAI_API_KEY")) != ""
-		if config != nil {
-			usesOpenAI = usesOpenAI || config.PrettyProvider == string(ProviderChatGPT)
-		}
-		if usesOpenAI {
+		if maybePrintOpenAISpend(config) {
 			fmt.Printf("\n" + Bold("OpenAI API spend:") + "\n")
 			fmt.Printf("  %s\n", Dim("Unavailable. Set OPENAI_ADMIN_KEY to query organization costs."))
 		}
@@ -641,6 +618,9 @@ func handleConfig(args []string) {
 	fmt.Printf("  Default Category: %s\n", Cyan(config.DefaultCategory))
 	fmt.Printf("  Auto Update Index: %s\n", Cyan(fmt.Sprintf("%t", config.AutoUpdateIndex)))
 	fmt.Printf("  Pretty Provider: %s\n", Cyan(config.PrettyProvider))
+	if resolvedProvider, err := ResolvePrettyProvider(config.PrettyProvider); err == nil && resolvedProvider != PrettyProvider(config.PrettyProvider) {
+		fmt.Printf("  Pretty Provider Resolved: %s\n", Cyan(string(resolvedProvider)))
+	}
 	fmt.Printf("  Pretty Mode: %s\n", Cyan(config.PrettyMode))
 	fmt.Printf("  Pretty Auto Apply: %s\n", Cyan(fmt.Sprintf("%t", config.PrettyAutoApply)))
 }
@@ -674,8 +654,11 @@ func handleClean(args []string) {
 		os.Exit(1)
 	}
 
-	index, _ := LoadIndex(kbPath)
-	entryCount := len(index.Entries)
+	entryCount, err := loadIndexedEntryCount(kbPath)
+	if err != nil {
+		warnIfCleanCountUnavailable(err)
+		entryCount = 0
+	}
 
 	printWarning("This will delete the KB at %s", kbPath)
 	if entryCount > 0 {
@@ -745,6 +728,8 @@ func main() {
 		handleStats(args)
 	case "config":
 		handleConfig(args)
+	case "doctor":
+		handleDoctor(args)
 	case "rebuild":
 		handleRebuild(args)
 	case "clean":

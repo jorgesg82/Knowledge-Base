@@ -58,23 +58,17 @@ func ParseEntry(filePath string) (*Entry, error) {
 		return nil, fmt.Errorf("failed to read entry: %w", err)
 	}
 
-	// Check for frontmatter delimiters
-	if !bytes.HasPrefix(data, []byte("---\n")) && !bytes.HasPrefix(data, []byte("---\r\n")) {
-		return nil, fmt.Errorf("invalid entry format: missing frontmatter start")
+	frontmatter, content, err := splitFrontmatter(data)
+	if err != nil {
+		return nil, err
 	}
 
-	parts := bytes.SplitN(data, []byte("---"), 3)
-	if len(parts) < 3 {
-		return nil, fmt.Errorf("invalid entry format: missing frontmatter end")
-	}
-
-	// Validate frontmatter is not empty
-	if len(bytes.TrimSpace(parts[1])) == 0 {
+	if len(bytes.TrimSpace(frontmatter)) == 0 {
 		return nil, fmt.Errorf("invalid entry format: empty frontmatter")
 	}
 
 	var metadata EntryMetadata
-	if err := yaml.Unmarshal(parts[1], &metadata); err != nil {
+	if err := yaml.Unmarshal(frontmatter, &metadata); err != nil {
 		return nil, fmt.Errorf("failed to parse frontmatter: %w", err)
 	}
 
@@ -98,16 +92,49 @@ func ParseEntry(filePath string) (*Entry, error) {
 		}
 	}
 
-	content := strings.TrimSpace(string(parts[2]))
+	contentString := strings.TrimSpace(string(content))
 
 	id := GenerateID(metadata.Category, metadata.Title)
 
 	return &Entry{
 		Metadata: metadata,
-		Content:  content,
+		Content:  contentString,
 		FilePath: filePath,
 		ID:       id,
 	}, nil
+}
+
+func splitFrontmatter(data []byte) ([]byte, []byte, error) {
+	var offset int
+	switch {
+	case bytes.HasPrefix(data, []byte("---\n")):
+		offset = len("---\n")
+	case bytes.HasPrefix(data, []byte("---\r\n")):
+		offset = len("---\r\n")
+	default:
+		return nil, nil, fmt.Errorf("invalid entry format: missing frontmatter start")
+	}
+
+	for start := offset; start <= len(data); {
+		lineEndOffset := bytes.IndexByte(data[start:], '\n')
+		if lineEndOffset == -1 {
+			line := bytes.TrimRight(data[start:], "\r")
+			if bytes.Equal(line, []byte("---")) {
+				return data[offset:start], nil, nil
+			}
+			break
+		}
+
+		lineEnd := start + lineEndOffset
+		line := bytes.TrimRight(data[start:lineEnd], "\r")
+		if bytes.Equal(line, []byte("---")) {
+			return data[offset:start], data[lineEnd+1:], nil
+		}
+
+		start = lineEnd + 1
+	}
+
+	return nil, nil, fmt.Errorf("invalid entry format: missing frontmatter end")
 }
 
 func WriteEntry(entry *Entry, filePath string) error {
