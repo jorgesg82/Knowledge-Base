@@ -1,6 +1,6 @@
 # KB - Test Suite
 
-Comprehensive test coverage for the Personal Knowledge Base tool.
+Targeted test coverage for the most important KB behaviors. The suite is stronger on parsing, indexing, archive safety, provider integration, and edge cases than on presentation-only output.
 
 ## Running Tests
 
@@ -48,6 +48,25 @@ Tests for AI integration:
 - Pretty option parsing
 - Claude request/response handling
 - ChatGPT/OpenAI request/response handling
+
+### pretty_test.go
+Tests for prettify UX helpers:
+- `--dry-run` and `--diff` parsing
+- Unified diff rendering
+
+### doctor_test.go
+Tests for environment diagnostics:
+- Provider resolution
+- Credential readiness checks
+- Editor/viewer command detection
+
+### cli_integration_test.go
+Black-box tests against the compiled binary:
+- `init` + `add` with `auto_update_index=false`
+- `clean` with a corrupt index
+- `doctor` output for missing provider credentials
+- `pretty --dry-run --diff`
+- `stats` without `OPENAI_ADMIN_KEY`
 
 ### archive_test.go
 Tests for archive safety:
@@ -101,27 +120,27 @@ Tests for archive safety:
    - Categories not inferred from file path
    - Fixed to extract from entries/category/file.md pattern
 
-## Test Coverage
+## Coverage Notes
 
-**Total**: 65+ test cases covering:
-- ✅ Normal operations
-- ✅ Edge cases
-- ✅ Error conditions
-- ✅ Security vulnerabilities
-- ✅ Performance (large data)
-- ✅ Concurrency
+The suite intentionally mixes:
+- unit tests for parsing, config, indexing, search, providers, and helpers
+- edge-case tests for malformed input and path traversal
+- black-box CLI tests for the highest-risk command flows
+
+Coverage is not “complete” across every CLI printing path. `main.go` is partially exercised through binary-level tests instead of only statement coverage.
 
 ## Coverage by Module
 
 | Module | Tests | Coverage Area |
 |--------|-------|---------------|
-| config.go | 5 | Config lifecycle, defaults, path detection |
-| entry.go | 8 | Parsing, writing, ID generation, validation |
-| index.go | 9 | CRUD operations, rebuilding, lookups |
-| search.go | 7 | Tags, categories, full-text, aggregation, long lines |
-| api.go | 3 | Provider parsing, Claude, ChatGPT/OpenAI |
-| archive.go | 3 | Export/import behavior and safety |
-| Edge cases | 13 | Security, robustness, error handling |
+| config.go | Unit tests | Config lifecycle, defaults, path/env overrides |
+| entry.go | Unit tests | Parsing, writing, ID generation, frontmatter edge cases |
+| index.go | Unit tests | CRUD operations, rebuilding, lookups |
+| search.go | Unit tests | Tags, categories, full-text, aggregation, long lines |
+| api.go / pretty.go | Unit tests | Provider parsing, OpenAI/Claude integration, dry-run/diff helpers |
+| archive.go | Unit tests | Export/import behavior and safety |
+| doctor.go | Unit tests | Environment and provider diagnostics |
+| main.go | CLI integration tests | Command flows and regressions in the compiled binary |
 
 ## Running Specific Tests
 
@@ -134,6 +153,9 @@ go test -v -run TestPathTraversalPrevention
 
 # Run with race detector
 go test -race ./...
+
+# Run only the CLI integration tests
+go test -run 'TestCLI' ./...
 
 # Generate coverage report
 go test -coverprofile=coverage.out ./...

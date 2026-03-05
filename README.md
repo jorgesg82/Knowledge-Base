@@ -127,6 +127,9 @@ kb pretty --all
 
 # Preview changes before applying (override auto-apply)
 kb pretty networking-tips --confirm
+
+# Show a unified diff without writing changes
+kb pretty networking-tips --dry-run --diff
 ```
 
 **Modes:**
@@ -136,7 +139,7 @@ kb pretty networking-tips --confirm
 
 **Configuration:**
 ```yaml
-pretty_provider: claude         # claude | chatgpt
+pretty_provider: auto           # auto | claude | chatgpt
 pretty_mode: moderate          # Default mode (conservative|moderate|aggressive)
 pretty_auto_apply: true        # Auto-apply without confirmation
 ```
@@ -145,6 +148,11 @@ pretty_auto_apply: true        # Auto-apply without confirmation
 - `claude`: `ANTHROPIC_API_KEY` or `ANTHROPIC_CUSTOM_HEADERS`, plus optional `ANTHROPIC_BASE_URL` and `ANTHROPIC_MODEL`
 - `chatgpt`: `OPENAI_API_KEY`, plus optional `OPENAI_BASE_URL` and `OPENAI_MODEL`
 - `kb stats` can show OpenAI API spend if `OPENAI_ADMIN_KEY` is set; use `OPENAI_PROJECT_ID` to scope it to one project
+
+**Platform defaults:**
+- `pretty_provider: auto` resolves to `chatgpt` on macOS and `claude` on Linux
+- OpenAI defaults to `gpt-5-mini` if `OPENAI_MODEL` is unset
+- Claude defaults to `claude-sonnet-4-6` if `ANTHROPIC_MODEL` is unset
 
 **Typical workflow:**
 1. Quickly jot down notes: `kb add quick/new-thing`
@@ -163,6 +171,9 @@ kb stats
 
 # Show configuration
 kb config
+
+# Check local environment and KB health
+kb doctor
 
 # Export KB
 kb export ~/backup/kb-$(date +%Y%m%d).tar.gz
@@ -197,13 +208,24 @@ Configuration is stored in `.kb/config.yml`:
 ```yaml
 kb_path: /path/to/kb           # KB root path
 editor: nvim                  # Editor for add/edit (nvim, vim, nano)
-viewer: glow                  # Viewer for show (glow, bat, mdcat, less)
+viewer: glow                  # Viewer for show (glow, bat, batcat, mdcat, less)
 default_category: misc        # Default category for new entries
 auto_update_index: true       # Auto-update index after changes
-pretty_provider: claude       # AI provider (claude, chatgpt)
+pretty_provider: auto         # AI provider (auto, claude, chatgpt)
 pretty_mode: moderate         # AI formatting mode (conservative, moderate, aggressive)
 pretty_auto_apply: true       # Auto-apply prettify changes without confirmation
 ```
+
+**Machine-local overrides:**
+These environment variables override the portable `.kb/config.yml` on a per-host basis:
+- `KB_PATH`
+- `KB_EDITOR`
+- `KB_VIEWER`
+- `KB_DEFAULT_CATEGORY`
+- `KB_AUTO_UPDATE_INDEX`
+- `KB_PRETTY_PROVIDER`
+- `KB_PRETTY_MODE`
+- `KB_PRETTY_AUTO_APPLY`
 
 **Viewer auto-detection:**
 The `kb init` command automatically detects the best markdown viewer available:
