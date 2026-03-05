@@ -5,7 +5,7 @@ Comprehensive test coverage for the Personal Knowledge Base tool.
 ## Running Tests
 
 ```bash
-cd /tmp/kb-dev
+cd /path/to/kb
 go test -v ./...
 ```
 
@@ -40,7 +40,20 @@ Tests for search functionality:
 - Search by tags (single and multiple, case insensitive)
 - Search by category
 - Full-text search in content
+- Full-text search on long lines
 - Tag and category aggregation
+
+### api_test.go
+Tests for AI integration:
+- Pretty option parsing
+- Claude request/response handling
+- ChatGPT/OpenAI request/response handling
+
+### archive_test.go
+Tests for archive safety:
+- Export excludes the target archive itself
+- Import rejects path traversal entries
+- Import rebuilds the index correctly
 
 ### edge_cases_test.go
 **Critical security and robustness tests:**
@@ -90,7 +103,7 @@ Tests for search functionality:
 
 ## Test Coverage
 
-**Total**: 60+ test cases covering:
+**Total**: 65+ test cases covering:
 - ✅ Normal operations
 - ✅ Edge cases
 - ✅ Error conditions
@@ -105,7 +118,9 @@ Tests for search functionality:
 | config.go | 5 | Config lifecycle, defaults, path detection |
 | entry.go | 8 | Parsing, writing, ID generation, validation |
 | index.go | 9 | CRUD operations, rebuilding, lookups |
-| search.go | 6 | Tags, categories, full-text, aggregation |
+| search.go | 7 | Tags, categories, full-text, aggregation, long lines |
+| api.go | 3 | Provider parsing, Claude, ChatGPT/OpenAI |
+| archive.go | 3 | Export/import behavior and safety |
 | Edge cases | 13 | Security, robustness, error handling |
 
 ## Running Specific Tests

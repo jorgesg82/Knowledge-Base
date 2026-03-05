@@ -1,15 +1,14 @@
 package main
 
 import (
-	"archive/tar"
-	"compress/gzip"
+	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 func printUsage() {
@@ -36,6 +35,7 @@ Usage:
 
 Pretty options:
   --mode <mode>               Set mode: conservative, moderate, aggressive
+  --provider <name>           Set AI provider: claude or chatgpt
   --confirm                   Ask for confirmation before applying
 
 Examples:
@@ -45,6 +45,7 @@ Examples:
   kb tag linux networking
   kb search "port forwarding"
   kb pretty ssh --mode conservative
+  kb pretty ssh --provider chatgpt
   kb pretty --all
   kb export ~/backup/kb.tar.gz
   kb rebuild
@@ -519,65 +520,13 @@ func handleExport(args []string) {
 		exportPath = "kb-export.tar.gz"
 	}
 
-	file, err := os.Create(exportPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating export file: %v\n", err)
-		os.Exit(1)
-	}
-	defer file.Close()
-
-	gzipWriter := gzip.NewWriter(file)
-	defer gzipWriter.Close()
-
-	tarWriter := tar.NewWriter(gzipWriter)
-	defer tarWriter.Close()
-
-	err = filepath.Walk(kbPath, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-
-		relPath, err := filepath.Rel(kbPath, path)
-		if err != nil {
-			return err
-		}
-
-		if relPath == "." {
-			return nil
-		}
-
-		header, err := tar.FileInfoHeader(info, "")
-		if err != nil {
-			return err
-		}
-		header.Name = relPath
-
-		if err := tarWriter.WriteHeader(header); err != nil {
-			return err
-		}
-
-		if !info.IsDir() {
-			file, err := os.Open(path)
-			if err != nil {
-				return err
-			}
-			defer file.Close()
-
-			if _, err := io.Copy(tarWriter, file); err != nil {
-				return err
-			}
-		}
-
-		return nil
-	})
-
+	entryCount, err := ExportKB(kbPath, exportPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating export: %v\n", err)
 		os.Exit(1)
 	}
 
-	index, _ := LoadIndex(kbPath)
-	printSuccess("Exported %d entries to %s", len(index.Entries), exportPath)
+	printSuccess("Exported %d entries to %s", entryCount, exportPath)
 }
 
 func handleImport(args []string) {
@@ -593,74 +542,9 @@ func handleImport(args []string) {
 		os.Exit(1)
 	}
 
-	tarballPath := args[0]
-	file, err := os.Open(tarballPath)
+	count, err := ImportKB(kbPath, args[0])
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error opening tarball: %v\n", err)
-		os.Exit(1)
-	}
-	defer file.Close()
-
-	gzipReader, err := gzip.NewReader(file)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading gzip: %v\n", err)
-		os.Exit(1)
-	}
-	defer gzipReader.Close()
-
-	tarReader := tar.NewReader(gzipReader)
-
-	count := 0
-	for {
-		header, err := tarReader.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error reading tar: %v\n", err)
-			os.Exit(1)
-		}
-
-		target := filepath.Join(kbPath, header.Name)
-
-		if header.Typeflag == tar.TypeDir {
-			if err := os.MkdirAll(target, 0755); err != nil {
-				fmt.Fprintf(os.Stderr, "Error creating directory: %v\n", err)
-				os.Exit(1)
-			}
-		} else {
-			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
-				fmt.Fprintf(os.Stderr, "Error creating directory: %v\n", err)
-				os.Exit(1)
-			}
-
-			outFile, err := os.Create(target)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error creating file: %v\n", err)
-				os.Exit(1)
-			}
-
-			if _, err := io.Copy(outFile, tarReader); err != nil {
-				outFile.Close()
-				fmt.Fprintf(os.Stderr, "Error writing file: %v\n", err)
-				os.Exit(1)
-			}
-			outFile.Close()
-
-			if strings.HasSuffix(header.Name, ".md") {
-				count++
-			}
-		}
-	}
-
-	index, err := RebuildIndex(kbPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error rebuilding index: %v\n", err)
-		os.Exit(1)
-	}
-
-	if err := SaveIndex(index, kbPath); err != nil {
-		fmt.Fprintf(os.Stderr, "Error saving index: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error importing tarball: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -680,6 +564,7 @@ func handleStats(args []string) {
 		os.Exit(1)
 	}
 
+	config, _ := LoadConfig(kbPath)
 	tagCounts := GetAllTags(index)
 	categoryCounts := GetAllCategories(index)
 
@@ -690,7 +575,7 @@ func handleStats(args []string) {
 	fmt.Printf("  Last updated: %s\n", Dim(index.LastUpdated.Format("2006-01-02 15:04:05")))
 
 	if len(categoryCounts) > 0 {
-		fmt.Printf("\n"+Bold("Entries by category:")+"\n")
+		fmt.Printf("\n" + Bold("Entries by category:") + "\n")
 		type catCount struct {
 			cat   string
 			count int
@@ -706,6 +591,34 @@ func handleStats(args []string) {
 			fmt.Printf("  %s: %s\n", Cyan(cc.cat), Yellow(fmt.Sprintf("%d", cc.count)))
 		}
 	}
+
+	printOpenAISpendStats(config)
+}
+
+func printOpenAISpendStats(config *Config) {
+	summary, err := FetchOpenAISpendSummary(time.Now())
+	if err == nil {
+		fmt.Printf("\n" + Bold("OpenAI API spend:") + "\n")
+		fmt.Printf("  Total: %s\n", Cyan(formatCurrencyAmount(summary.Total, summary.Currency)))
+		fmt.Printf("  Last 30 days: %s\n", Cyan(formatCurrencyAmount(summary.Last30Days, summary.Currency)))
+		fmt.Printf("  Today: %s\n", Cyan(formatCurrencyAmount(summary.Today, summary.Currency)))
+		return
+	}
+
+	if errors.Is(err, ErrOpenAIAdminKeyNotSet) {
+		usesOpenAI := strings.TrimSpace(os.Getenv("OPENAI_API_KEY")) != ""
+		if config != nil {
+			usesOpenAI = usesOpenAI || config.PrettyProvider == string(ProviderChatGPT)
+		}
+		if usesOpenAI {
+			fmt.Printf("\n" + Bold("OpenAI API spend:") + "\n")
+			fmt.Printf("  %s\n", Dim("Unavailable. Set OPENAI_ADMIN_KEY to query organization costs."))
+		}
+		return
+	}
+
+	fmt.Printf("\n" + Bold("OpenAI API spend:") + "\n")
+	fmt.Printf("  %s\n", Yellow(fmt.Sprintf("Unavailable (%v)", err)))
 }
 
 func handleConfig(args []string) {
@@ -727,6 +640,9 @@ func handleConfig(args []string) {
 	fmt.Printf("  Viewer: %s\n", Cyan(config.Viewer))
 	fmt.Printf("  Default Category: %s\n", Cyan(config.DefaultCategory))
 	fmt.Printf("  Auto Update Index: %s\n", Cyan(fmt.Sprintf("%t", config.AutoUpdateIndex)))
+	fmt.Printf("  Pretty Provider: %s\n", Cyan(config.PrettyProvider))
+	fmt.Printf("  Pretty Mode: %s\n", Cyan(config.PrettyMode))
+	fmt.Printf("  Pretty Auto Apply: %s\n", Cyan(fmt.Sprintf("%t", config.PrettyAutoApply)))
 }
 
 func handleRebuild(args []string) {

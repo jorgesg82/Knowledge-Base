@@ -2,12 +2,26 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"strings"
+	"time"
+
+	openai "github.com/openai/openai-go"
+	"github.com/openai/openai-go/option"
+	"github.com/openai/openai-go/responses"
+	"github.com/openai/openai-go/shared"
+)
+
+type PrettyProvider string
+
+const (
+	ProviderClaude  PrettyProvider = "claude"
+	ProviderChatGPT PrettyProvider = "chatgpt"
 )
 
 type ClaudeMessage struct {
@@ -18,6 +32,7 @@ type ClaudeMessage struct {
 type ClaudeRequest struct {
 	Model     string          `json:"model"`
 	MaxTokens int             `json:"max_tokens"`
+	System    string          `json:"system,omitempty"`
 	Messages  []ClaudeMessage `json:"messages"`
 }
 
@@ -34,6 +49,33 @@ const (
 	ModeModerate     PrettyMode = "moderate"
 	ModeAggressive   PrettyMode = "aggressive"
 )
+
+var claudeHTTPClient = &http.Client{Timeout: 60 * time.Second}
+var openAIHTTPClient = &http.Client{Timeout: 60 * time.Second}
+
+func ParsePrettyMode(mode string) (PrettyMode, error) {
+	switch PrettyMode(strings.ToLower(strings.TrimSpace(mode))) {
+	case ModeConservative:
+		return ModeConservative, nil
+	case ModeModerate:
+		return ModeModerate, nil
+	case ModeAggressive:
+		return ModeAggressive, nil
+	default:
+		return "", fmt.Errorf("invalid mode: %s. Use: conservative, moderate, or aggressive", mode)
+	}
+}
+
+func ParsePrettyProvider(provider string) (PrettyProvider, error) {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "", string(ProviderClaude):
+		return ProviderClaude, nil
+	case string(ProviderChatGPT), "openai":
+		return ProviderChatGPT, nil
+	default:
+		return "", fmt.Errorf("invalid provider: %s. Use: claude or chatgpt", provider)
+	}
+}
 
 func getSystemPrompt(mode PrettyMode) string {
 	basePrompt := `You are a technical documentation formatter for a personal knowledge base.
@@ -88,31 +130,48 @@ Mode: AGGRESSIVE - Format + expand explanations
 	return basePrompt
 }
 
-func PrettifyEntry(content string, mode PrettyMode) (string, error) {
-	apiKey := os.Getenv("ANTHROPIC_CUSTOM_HEADERS")
-	if apiKey == "" {
-		return "", fmt.Errorf("ANTHROPIC_CUSTOM_HEADERS not set in environment")
+func PrettifyEntry(content string, mode PrettyMode, provider string) (string, error) {
+	prettyProvider, err := ParsePrettyProvider(provider)
+	if err != nil {
+		return "", err
 	}
 
-	baseURL := os.Getenv("ANTHROPIC_BASE_URL")
+	switch prettyProvider {
+	case ProviderClaude:
+		return prettifyWithClaude(content, mode)
+	case ProviderChatGPT:
+		return prettifyWithOpenAI(content, mode)
+	default:
+		return "", fmt.Errorf("unsupported provider: %s", provider)
+	}
+}
+
+func prettifyWithClaude(content string, mode PrettyMode) (string, error) {
+	baseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("ANTHROPIC_BASE_URL")), "/")
 	if baseURL == "" {
-		baseURL = "https://api.portkey.ai"
+		if strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")) != "" {
+			baseURL = "https://api.anthropic.com"
+		} else {
+			baseURL = "https://api.portkey.ai"
+		}
 	}
 
-	model := os.Getenv("ANTHROPIC_DEFAULT_SONNET_MODEL")
+	model := strings.TrimSpace(os.Getenv("ANTHROPIC_MODEL"))
+	if model == "" {
+		model = strings.TrimSpace(os.Getenv("ANTHROPIC_DEFAULT_SONNET_MODEL"))
+	}
 	if model == "" {
 		model = "@vertexai-global/anthropic.claude-sonnet-4-5@20250929"
 	}
 
-	systemPrompt := getSystemPrompt(mode)
-
 	reqBody := ClaudeRequest{
 		Model:     model,
 		MaxTokens: 4096,
+		System:    getSystemPrompt(mode),
 		Messages: []ClaudeMessage{
 			{
 				Role:    "user",
-				Content: systemPrompt + "\n\nFormat this entry:\n\n" + content,
+				Content: "Format this entry:\n\n" + content,
 			},
 		},
 	}
@@ -127,29 +186,32 @@ func PrettifyEntry(content string, mode PrettyMode) (string, error) {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 
-	// Parse custom headers (format: "key: value")
-	headerParts := strings.SplitN(apiKey, ":", 2)
-	if len(headerParts) == 2 {
-		req.Header.Set(strings.TrimSpace(headerParts[0]), strings.TrimSpace(headerParts[1]))
-	}
-
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("anthropic-version", "2023-06-01")
+	req.Header.Set("x-api-key", strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")))
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("failed to make request: %w", err)
+	customHeaders := strings.TrimSpace(os.Getenv("ANTHROPIC_CUSTOM_HEADERS"))
+	if customHeaders != "" {
+		headers, err := parseCustomHeaders(customHeaders)
+		if err != nil {
+			return "", err
+		}
+		for key, value := range headers {
+			req.Header.Set(key, value)
+		}
 	}
-	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("failed to read response: %w", err)
+	if req.Header.Get("x-api-key") == "" && customHeaders == "" {
+		return "", fmt.Errorf("ANTHROPIC_API_KEY or ANTHROPIC_CUSTOM_HEADERS not set in environment")
 	}
 
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
+	body, statusCode, err := doClaudeRequest(req)
+	if err != nil {
+		return "", err
+	}
+
+	if statusCode < 200 || statusCode >= 300 {
+		return "", fmt.Errorf("API error (status %d): %s", statusCode, string(body))
 	}
 
 	var claudeResp ClaudeResponse
@@ -157,9 +219,114 @@ func PrettifyEntry(content string, mode PrettyMode) (string, error) {
 		return "", fmt.Errorf("failed to parse response: %w", err)
 	}
 
-	if len(claudeResp.Content) == 0 {
+	if len(claudeResp.Content) == 0 || strings.TrimSpace(claudeResp.Content[0].Text) == "" {
 		return "", fmt.Errorf("empty response from API")
 	}
 
 	return claudeResp.Content[0].Text, nil
+}
+
+func prettifyWithOpenAI(content string, mode PrettyMode) (string, error) {
+	apiKey := strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
+	if apiKey == "" {
+		return "", fmt.Errorf("OPENAI_API_KEY not set in environment")
+	}
+
+	model := strings.TrimSpace(os.Getenv("OPENAI_MODEL"))
+	if model == "" {
+		model = "gpt-5"
+	}
+
+	client := newOpenAIClient(apiKey, strings.TrimSpace(os.Getenv("OPENAI_BASE_URL")), openAIHTTPClient)
+	resp, err := client.Responses.New(context.Background(), responses.ResponseNewParams{
+		Model:        shared.ResponsesModel(model),
+		Instructions: openai.String(getSystemPrompt(mode)),
+		Input: responses.ResponseNewParamsInputUnion{
+			OfString: openai.String("Format this entry:\n\n" + content),
+		},
+	}, option.WithRequestTimeout(60*time.Second))
+	if err != nil {
+		return "", fmt.Errorf("failed to make request: %w", err)
+	}
+
+	text := strings.TrimSpace(resp.OutputText())
+	if text == "" {
+		return "", fmt.Errorf("empty response from API")
+	}
+
+	return text, nil
+}
+
+func newOpenAIClient(apiKey, baseURL string, httpClient *http.Client) openai.Client {
+	opts := []option.RequestOption{
+		option.WithAPIKey(apiKey),
+	}
+
+	normalizedBaseURL := normalizeOpenAIBaseURL(baseURL)
+	if normalizedBaseURL != "" {
+		opts = append(opts, option.WithBaseURL(normalizedBaseURL))
+	}
+
+	if httpClient != nil {
+		opts = append(opts, option.WithHTTPClient(httpClient))
+	}
+
+	if orgID := strings.TrimSpace(os.Getenv("OPENAI_ORG_ID")); orgID != "" {
+		opts = append(opts, option.WithOrganization(orgID))
+	}
+
+	if projectID := strings.TrimSpace(os.Getenv("OPENAI_PROJECT_ID")); projectID != "" {
+		opts = append(opts, option.WithProject(projectID))
+	}
+
+	return openai.NewClient(opts...)
+}
+
+func normalizeOpenAIBaseURL(rawBaseURL string) string {
+	trimmed := strings.TrimSpace(rawBaseURL)
+	if trimmed == "" {
+		return ""
+	}
+
+	trimmed = strings.TrimRight(trimmed, "/")
+	if strings.HasSuffix(trimmed, "/v1") {
+		return trimmed + "/"
+	}
+
+	return trimmed + "/v1/"
+}
+
+func parseCustomHeaders(rawHeaders string) (map[string]string, error) {
+	headers := make(map[string]string)
+
+	for _, line := range strings.Split(rawHeaders, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid ANTHROPIC_CUSTOM_HEADERS format: %s", line)
+		}
+
+		headers[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+	}
+
+	return headers, nil
+}
+
+func doClaudeRequest(req *http.Request) ([]byte, int, error) {
+	resp, err := claudeHTTPClient.Do(req)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to make request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, resp.StatusCode, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	return body, resp.StatusCode, nil
 }

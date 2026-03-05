@@ -4,7 +4,76 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
+
+type PrettyOptions struct {
+	Mode       PrettyMode
+	Provider   PrettyProvider
+	AutoApply  bool
+	ProcessAll bool
+	Query      string
+}
+
+func parsePrettyOptions(args []string, config *Config) (*PrettyOptions, error) {
+	mode, err := ParsePrettyMode(config.PrettyMode)
+	if err != nil {
+		return nil, err
+	}
+
+	provider, err := ParsePrettyProvider(config.PrettyProvider)
+	if err != nil {
+		return nil, err
+	}
+
+	options := &PrettyOptions{
+		Mode:       mode,
+		Provider:   provider,
+		AutoApply:  config.PrettyAutoApply,
+		ProcessAll: false,
+	}
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "--mode":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("missing value for --mode")
+			}
+			mode, err := ParsePrettyMode(args[i+1])
+			if err != nil {
+				return nil, err
+			}
+			options.Mode = mode
+			i++
+		case "--provider":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("missing value for --provider")
+			}
+			provider, err := ParsePrettyProvider(args[i+1])
+			if err != nil {
+				return nil, err
+			}
+			options.Provider = provider
+			i++
+		case "--confirm":
+			options.AutoApply = false
+		case "--all":
+			options.ProcessAll = true
+		default:
+			if strings.HasPrefix(arg, "--") {
+				return nil, fmt.Errorf("unknown flag: %s", arg)
+			}
+			if options.Query == "" {
+				options.Query = arg
+				continue
+			}
+			return nil, fmt.Errorf("unexpected extra argument: %s", arg)
+		}
+	}
+
+	return options, nil
+}
 
 func handlePretty(args []string) {
 	kbPath, err := GetKBPath()
@@ -25,52 +94,28 @@ func handlePretty(args []string) {
 		os.Exit(1)
 	}
 
-	// Parse flags
-	mode := config.PrettyMode
-	autoApply := config.PrettyAutoApply
-	processAll := false
-	var query string
-
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		switch arg {
-		case "--mode":
-			if i+1 < len(args) {
-				mode = args[i+1]
-				i++
-			}
-		case "--confirm":
-			autoApply = false
-		case "--all":
-			processAll = true
-		default:
-			if query == "" {
-				query = arg
-			}
-		}
-	}
-
-	// Validate mode
-	prettyMode := PrettyMode(mode)
-	if prettyMode != ModeConservative && prettyMode != ModeModerate && prettyMode != ModeAggressive {
-		printError("Invalid mode: %s. Use: conservative, moderate, or aggressive", mode)
+	options, err := parsePrettyOptions(args, config)
+	if err != nil {
+		printError("%v", err)
 		os.Exit(1)
 	}
 
-	if processAll {
-		prettifyAll(index, kbPath, prettyMode, autoApply)
-	} else {
-		if query == "" {
-			fmt.Fprintln(os.Stderr, "Error: missing entry query")
-			fmt.Fprintln(os.Stderr, "Usage: kb pretty <query>")
-			fmt.Fprintln(os.Stderr, "       kb pretty --all")
-			os.Exit(1)
-		}
-		prettifyOne(index, kbPath, query, prettyMode, autoApply)
+	if options.ProcessAll {
+		prettifyAll(index, kbPath, options)
+		return
 	}
+
+	if options.Query == "" {
+		fmt.Fprintln(os.Stderr, "Error: missing entry query")
+		fmt.Fprintln(os.Stderr, "Usage: kb pretty <query>")
+		fmt.Fprintln(os.Stderr, "       kb pretty --all")
+		os.Exit(1)
+	}
+
+	prettifyOne(index, kbPath, options.Query, options)
 }
 
-func prettifyOne(index *Index, kbPath, query string, mode PrettyMode, autoApply bool) {
+func prettifyOne(index *Index, kbPath, query string, options *PrettyOptions) {
 	indexEntry := FindEntryWithInference(index, query)
 	if indexEntry == nil {
 		printError("No entry found matching: %s", query)
@@ -79,24 +124,21 @@ func prettifyOne(index *Index, kbPath, query string, mode PrettyMode, autoApply 
 
 	entryPath := filepath.Join(kbPath, indexEntry.Path)
 
-	printInfo("Prettifying: %s (%s mode)", indexEntry.Title, mode)
+	printInfo("Prettifying: %s (%s mode, %s)", indexEntry.Title, options.Mode, options.Provider)
 
-	// Read current content
 	content, err := os.ReadFile(entryPath)
 	if err != nil {
 		printError("Failed to read entry: %v", err)
 		os.Exit(1)
 	}
 
-	// Call Claude API
-	improved, err := PrettifyEntry(string(content), mode)
+	improved, err := PrettifyEntry(string(content), options.Mode, string(options.Provider))
 	if err != nil {
 		printError("Failed to prettify: %v", err)
 		os.Exit(1)
 	}
 
-	// Apply or confirm
-	if !autoApply {
+	if !options.AutoApply {
 		fmt.Println("\n" + Header("Preview of changes:"))
 		fmt.Println(Dim("────────────────────────────────────────"))
 		fmt.Println(improved)
@@ -110,13 +152,11 @@ func prettifyOne(index *Index, kbPath, query string, mode PrettyMode, autoApply 
 		}
 	}
 
-	// Write improved content
 	if err := os.WriteFile(entryPath, []byte(improved), 0644); err != nil {
 		printError("Failed to write entry: %v", err)
 		os.Exit(1)
 	}
 
-	// Update index
 	entry, err := ParseEntry(entryPath)
 	if err != nil {
 		printWarning("Failed to parse entry after prettifying: %v", err)
@@ -130,9 +170,11 @@ func prettifyOne(index *Index, kbPath, query string, mode PrettyMode, autoApply 
 	printSuccess("Prettified: %s", indexEntry.Title)
 }
 
-func prettifyAll(index *Index, kbPath string, mode PrettyMode, autoApply bool) {
-	if !autoApply {
-		fmt.Printf(Warning("This will prettify ALL %d entries. Continue? (y/N): "), len(index.Entries))
+func prettifyAll(index *Index, kbPath string, options *PrettyOptions) {
+	entries := SnapshotEntries(index)
+
+	if !options.AutoApply {
+		fmt.Printf(Warning("This will prettify ALL %d entries. Continue? (y/N): "), len(entries))
 		var response string
 		fmt.Scanln(&response)
 		if response != "y" && response != "Y" {
@@ -141,18 +183,17 @@ func prettifyAll(index *Index, kbPath string, mode PrettyMode, autoApply bool) {
 		}
 	}
 
-	printInfo("Prettifying all entries (%s mode)...", mode)
+	printInfo("Prettifying all entries (%s mode, %s)...", options.Mode, options.Provider)
 
 	successCount := 0
 	failCount := 0
 
-	for i, indexEntry := range index.Entries {
+	for i, indexEntry := range entries {
 		entryPath := filepath.Join(kbPath, indexEntry.Path)
 
-		fmt.Printf(Dim("[%d/%d] "), i+1, len(index.Entries))
+		fmt.Printf(Dim("[%d/%d] "), i+1, len(entries))
 		fmt.Printf("Processing: %s... ", indexEntry.Title)
 
-		// Read current content
 		content, err := os.ReadFile(entryPath)
 		if err != nil {
 			fmt.Println(Red("FAILED"))
@@ -161,8 +202,7 @@ func prettifyAll(index *Index, kbPath string, mode PrettyMode, autoApply bool) {
 			continue
 		}
 
-		// Call Claude API
-		improved, err := PrettifyEntry(string(content), mode)
+		improved, err := PrettifyEntry(string(content), options.Mode, string(options.Provider))
 		if err != nil {
 			fmt.Println(Red("FAILED"))
 			printError("  API error: %v", err)
@@ -170,7 +210,6 @@ func prettifyAll(index *Index, kbPath string, mode PrettyMode, autoApply bool) {
 			continue
 		}
 
-		// Write improved content
 		if err := os.WriteFile(entryPath, []byte(improved), 0644); err != nil {
 			fmt.Println(Red("FAILED"))
 			printError("  Failed to write: %v", err)
@@ -178,7 +217,6 @@ func prettifyAll(index *Index, kbPath string, mode PrettyMode, autoApply bool) {
 			continue
 		}
 
-		// Update index entry
 		entry, err := ParseEntry(entryPath)
 		if err == nil {
 			AddToIndex(index, entry, kbPath)
@@ -188,7 +226,6 @@ func prettifyAll(index *Index, kbPath string, mode PrettyMode, autoApply bool) {
 		successCount++
 	}
 
-	// Save updated index
 	if err := SaveIndex(index, kbPath); err != nil {
 		printWarning("Failed to save index: %v", err)
 	}
