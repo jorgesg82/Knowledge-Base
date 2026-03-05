@@ -13,6 +13,8 @@ import (
 
 var ErrOpenAIAdminKeyNotSet = errors.New("OPENAI_ADMIN_KEY not set")
 
+var openAICostsMinimumStartTime = time.Unix(1, 0).UTC()
+
 type OpenAISpendSummary struct {
 	Currency   string
 	Total      float64
@@ -53,7 +55,7 @@ func FetchOpenAISpendSummary(now time.Time) (*OpenAISpendSummary, error) {
 	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	last30Start := now.AddDate(0, 0, -30)
 
-	total, currency, err := fetchOpenAICostRange(time.Unix(0, 0), now)
+	total, currency, err := fetchOpenAICostRange(openAICostsMinimumStartTime, now)
 	if err != nil {
 		return nil, err
 	}

@@ -10,6 +10,7 @@ import (
 
 func TestFetchOpenAISpendSummary(t *testing.T) {
 	now := time.Date(2026, time.March, 5, 15, 4, 5, 0, time.UTC).In(time.Local)
+	totalStart := openAICostsMinimumStartTime.Unix()
 	last30Start := now.AddDate(0, 0, -30).Unix()
 	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).Unix()
 
@@ -28,9 +29,9 @@ func TestFetchOpenAISpendSummary(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 
 		switch {
-		case startTime == "0" && page == "":
+		case startTime == fmt.Sprintf("%d", totalStart) && page == "":
 			fmt.Fprint(w, `{"data":[{"results":[{"amount":{"value":5.00,"currency":"usd"}}]}],"has_more":true,"next_page":"page-2"}`)
-		case startTime == "0" && page == "page-2":
+		case startTime == fmt.Sprintf("%d", totalStart) && page == "page-2":
 			fmt.Fprint(w, `{"data":[{"results":[{"amount":{"value":7.00,"currency":"usd"}}]}],"has_more":false,"next_page":""}`)
 		case startTime == fmt.Sprintf("%d", last30Start):
 			fmt.Fprint(w, `{"data":[{"results":[{"amount":{"value":3.50,"currency":"usd"}}]}],"has_more":false,"next_page":""}`)
@@ -67,6 +68,30 @@ func TestFetchOpenAISpendSummary(t *testing.T) {
 
 	if summary.Today != 0.25 {
 		t.Errorf("expected today 0.25, got %.2f", summary.Today)
+	}
+}
+
+func TestFetchOpenAISpendSummaryDoesNotUseZeroStartTime(t *testing.T) {
+	now := time.Date(2026, time.March, 5, 15, 4, 5, 0, time.UTC)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("start_time"); got == "0" {
+			t.Fatal("expected total spend query to avoid start_time=0")
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"data":[],"has_more":false,"next_page":""}`)
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENAI_ADMIN_KEY", "test-admin-key")
+	t.Setenv("OPENAI_ADMIN_BASE_URL", server.URL)
+	t.Setenv("OPENAI_BASE_URL", "")
+	t.Setenv("OPENAI_PROJECT_ID", "")
+	t.Setenv("OPENAI_ORG_ID", "")
+
+	if _, err := FetchOpenAISpendSummary(now); err != nil {
+		t.Fatalf("FetchOpenAISpendSummary failed: %v", err)
 	}
 }
 
