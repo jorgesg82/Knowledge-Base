@@ -54,8 +54,8 @@ func synthesizeFindWithOpenAI(query string, candidates []scoredCanonicalNote) (s
 
 	client := newOpenAIClient(apiKey, strings.TrimSpace(os.Getenv("OPENAI_BASE_URL")), openAIHTTPClient)
 	resp, err := client.Responses.New(context.Background(), responses.ResponseNewParams{
-		Model:        shared.ResponsesModel(model),
-		Instructions: openai.String(findSynthesisSystemPrompt()),
+		Model:           shared.ResponsesModel(model),
+		Instructions:    openai.String(findSynthesisSystemPrompt()),
 		MaxOutputTokens: openai.Int(findSynthesisMaxOutputTokens),
 		Input: responses.ResponseNewParamsInputUnion{
 			OfString: openai.String(buildFindSynthesisInput(query, candidates)),

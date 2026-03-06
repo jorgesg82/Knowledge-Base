@@ -69,8 +69,8 @@ func planAddWithOpenAI(content string, candidates []*CanonicalNote) (*AddPlan, s
 
 	client := newOpenAIClient(apiKey, strings.TrimSpace(os.Getenv("OPENAI_BASE_URL")), openAIHTTPClient)
 	resp, err := client.Responses.New(context.Background(), responses.ResponseNewParams{
-		Model:        shared.ResponsesModel(model),
-		Instructions: openai.String(addPlannerSystemPrompt()),
+		Model:           shared.ResponsesModel(model),
+		Instructions:    openai.String(addPlannerSystemPrompt()),
 		MaxOutputTokens: openai.Int(addPlannerMaxOutputTokens),
 		Input: responses.ResponseNewParamsInputUnion{
 			OfString: openai.String(buildAddPlanningInput(content, candidates)),
