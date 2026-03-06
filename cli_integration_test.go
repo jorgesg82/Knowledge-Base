@@ -303,3 +303,39 @@ func TestCLIStatsDoesNotCrashWithoutAdminKey(t *testing.T) {
 		t.Fatalf("expected missing admin key message in stats output: %s", stdout)
 	}
 }
+
+func TestCLIShowFallsBackToBuiltinRendererWhenViewerIsUnavailable(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	_, stderr, exitCode := runCLI(t, repoRootDir(), []string{"EDITOR=true"}, "", "init", tmpDir)
+	if exitCode != 0 {
+		t.Fatalf("init failed: %s", stderr)
+	}
+
+	entryPath := filepath.Join(tmpDir, "entries", "misc", "viewer-test.md")
+	if err := os.MkdirAll(filepath.Dir(entryPath), 0755); err != nil {
+		t.Fatalf("failed to create entry dir: %v", err)
+	}
+	entry := "---\ntitle: Viewer Test\ncategory: misc\ncreated: 2026-03-06T00:00:00Z\nupdated: 2026-03-06T00:00:00Z\n---\n\n# Viewer Test\n\n- first item\n"
+	if err := os.WriteFile(entryPath, []byte(entry), 0644); err != nil {
+		t.Fatalf("failed to write entry: %v", err)
+	}
+
+	parsed, err := ParseEntry(entryPath)
+	if err != nil {
+		t.Fatalf("failed to parse entry: %v", err)
+	}
+	index := &Index{Entries: []IndexEntry{}}
+	AddToIndex(index, parsed, tmpDir)
+	if err := SaveIndex(index, tmpDir); err != nil {
+		t.Fatalf("failed to save index: %v", err)
+	}
+
+	stdout, stderr, exitCode := runCLI(t, tmpDir, []string{"KB_VIEWER=definitely-not-installed-viewer"}, "", "show", "viewer-test")
+	if exitCode != 0 {
+		t.Fatalf("show failed: stdout=%s stderr=%s", stdout, stderr)
+	}
+	if !strings.Contains(stdout, "Viewer Test") || !strings.Contains(stdout, "first item") {
+		t.Fatalf("expected builtin renderer output, got: %s", stdout)
+	}
+}

@@ -11,7 +11,7 @@ A fast, portable, command-line knowledge base for storing and retrieving notes, 
 - ⚡ **Single binary** - no runtime dependencies
 - 🎯 **Fast indexing** with JSON cache
 - 🎨 **Colorized output** for better readability
-- 📖 **Markdown viewer** - uses `glow`/`bat`/`mdcat` for beautiful rendering
+- 📖 **Markdown viewer** - uses `glow`/`bat`/`mdcat`, with a built-in renderer fallback
 
 ## Installation
 
@@ -208,7 +208,7 @@ Configuration is stored in `.kb/config.yml`:
 ```yaml
 kb_path: /path/to/kb           # KB root path
 editor: nvim                  # Editor for add/edit (nvim, vim, nano)
-viewer: glow                  # Viewer for show (glow, bat, batcat, mdcat, less)
+viewer: builtin               # Viewer for show (builtin, glow, bat, batcat, mdcat, mdless, less)
 default_category: misc        # Default category for new entries
 auto_update_index: true       # Auto-update index after changes
 pretty_provider: auto         # AI provider (auto, claude, chatgpt)
@@ -233,11 +233,12 @@ The `kb init` command automatically detects the best markdown viewer available:
 2. `bat` - Syntax highlighting with line numbers
 3. `mdcat` - Terminal markdown rendering
 4. `mdless` - Markdown pager
-5. `less` - Fallback plain text viewer
+5. `builtin` - Built-in Markdown renderer with `less -R` paging when available
 
 **Edit vs Show:**
 - `kb edit <query>` - Opens in your editor (for editing raw markdown)
 - `kb show <query>` - Opens in your viewer (for reading rendered markdown)
+  If the configured viewer is unavailable, or if it is `less`, `kb` falls back to the built-in Markdown renderer.
 
 ## Tips
 

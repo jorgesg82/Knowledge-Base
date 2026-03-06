@@ -34,6 +34,16 @@ func TestGetDefaultConfig(t *testing.T) {
 	}
 }
 
+func TestGetDefaultConfigFallsBackToBuiltinViewer(t *testing.T) {
+	t.Setenv("EDITOR", "nvim")
+	t.Setenv("PATH", t.TempDir())
+
+	config := GetDefaultConfig("/test/path")
+	if config.Viewer != builtinViewerName {
+		t.Fatalf("Expected Viewer %s, got %s", builtinViewerName, config.Viewer)
+	}
+}
+
 func TestSaveAndLoadConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 

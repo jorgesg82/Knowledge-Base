@@ -60,11 +60,18 @@ Tests for environment diagnostics:
 - Credential readiness checks
 - Editor/viewer command detection
 
+### viewer_test.go
+Tests for Markdown viewing behavior:
+- Built-in viewer selection (`builtin`, `less`, fallback modes)
+- Default config fallback when no external viewer exists
+- Terminal Markdown rendering without external tools
+
 ### cli_integration_test.go
 Black-box tests against the compiled binary:
 - `init` + `add` with `auto_update_index=false`
 - `clean` with a corrupt index
 - `doctor` output for missing provider credentials
+- `show` falling back to the built-in renderer when the configured viewer is unavailable
 - `pretty --dry-run --diff`
 - `stats` without `OPENAI_ADMIN_KEY`
 
