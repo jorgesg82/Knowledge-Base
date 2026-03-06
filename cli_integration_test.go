@@ -61,11 +61,27 @@ func repoRootDir() string {
 	if !ok {
 		panic("failed to locate test file")
 	}
-	wd := filepath.Dir(filename)
-	if filepath.Base(wd) != "kb" {
-		panic("unexpected repo root: " + wd)
+
+	root, err := findRepoRoot(filepath.Dir(filename))
+	if err != nil {
+		panic(err.Error())
 	}
-	return wd
+	return root
+}
+
+func findRepoRoot(startDir string) (string, error) {
+	for dir := startDir; ; dir = filepath.Dir(dir) {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir, nil
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+	}
+
+	return "", &execError{err: errors.New("failed to locate repo root"), output: startDir}
 }
 
 func runCLI(t *testing.T, dir string, env []string, stdin string, args ...string) (string, string, int) {
@@ -93,6 +109,16 @@ func runCLI(t *testing.T, dir string, env []string, stdin string, args ...string
 	}
 
 	return stdout.String(), stderr.String(), exitCode
+}
+
+func TestFindRepoRoot(t *testing.T) {
+	root, err := findRepoRoot(filepath.Join(repoRootDir(), "entries", "misc"))
+	if err != nil {
+		t.Fatalf("findRepoRoot failed: %v", err)
+	}
+	if root != repoRootDir() {
+		t.Fatalf("expected repo root %s, got %s", repoRootDir(), root)
+	}
 }
 
 func TestCLIAddRespectsAutoUpdateIndexDisabled(t *testing.T) {
