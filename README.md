@@ -15,23 +15,25 @@ A fast, portable, command-line knowledge base for storing and retrieving notes, 
 
 ## Installation
 
-Build the binary from this repository:
+Build locally:
 
 ```bash
 go build -o kb
 ```
 
+Or download a prebuilt archive from GitHub Releases (`kb_<version>_<os>_<arch>.tar.gz`, plus `checksums.txt`):
+
+```bash
+curl -LO https://github.com/jorgesg82/Knowledge-Base/releases/download/v0.1.0/kb_v0.1.0_darwin_arm64.tar.gz
+tar xzf kb_v0.1.0_darwin_arm64.tar.gz
+```
+
 ### Add to PATH
 
-Option 1 - Add the repository directory to your shell profile:
+Add the directory containing `kb` to your shell profile:
 ```bash
 echo 'export PATH="$HOME/kb:$PATH"' >> ~/.zshrc
 source ~/.zshrc
-```
-
-Option 2 - Create a symlink (if `~/bin` is in PATH):
-```bash
-ln -sf "$HOME/kb/kb" "$HOME/bin/kb"
 ```
 
 ## Quick Start
