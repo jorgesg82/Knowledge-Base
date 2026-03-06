@@ -1,14 +1,15 @@
 # Personal Knowledge Base (KB)
 
-A fast command-line knowledge base for storing and retrieving notes, commands, snippets, and documentation.
+A fast command-line knowledge base for capturing and retrieving technical knowledge.
 
 ## Features
 
-- Markdown entries with YAML frontmatter
-- Categories, tags, full-text search, and fast JSON indexing
-- AI formatting via Claude or ChatGPT
+- Fast capture with `kb add`
+- Retrieval and browsing with `kb find`
+- AI-assisted organization via Claude or ChatGPT
+- Canonical notes materialized as Markdown with YAML frontmatter
 - Export/import as tarball
-- Built-in Markdown rendering fallback for `kb show`
+- Built-in Markdown rendering fallback for `kb find`
 - Single binary with optional prebuilt release downloads
 
 ## Installation
@@ -34,51 +35,55 @@ source ~/.zshrc
 # Initialize a KB
 kb init ~/my-kb
 
-# Create an entry
-kb add linux/networking-tips
+# Capture something quickly
+kb add "how to inspect open ports on macos"
+kb add   # opens your editor
+kb add --clipboard
+kb add --file ~/Downloads/snippet.txt
+kb add --url https://example.com/article
 
-# Search and browse
-kb list
-kb search "port forwarding"
-kb tag linux networking
-kb show networking-tips
-
-# AI formatting
-kb pretty networking-tips
-kb pretty networking-tips --dry-run --diff
+# Retrieve it later
+kb find
+kb find open ports
+kb find macos
 
 # Backup
 kb export ~/backup/kb-$(date +%Y%m%d).tar.gz
 ```
 
-Entries are Markdown files with YAML frontmatter under `entries/<category>/...`.
+Materialized notes live under `entries/`. Internal captures, canonical note records, and operation logs live under `.kb/`.
 
 ## Commands
 
+Core workflow:
+
 ```text
 kb init [path]
-kb add [category/]title
-kb edit <query>
-kb show <query>
-kb rm <query>
-kb list [category]
-kb search <text>
-kb tag <tag> [<tag2>...]
-kb tags
-kb pretty <query> [--mode ...] [--provider ...]
-kb export [path]
-kb import <tarball>
+kb add [text]
+kb find [query]
+```
+
+Maintenance:
+
+```text
+kb doctor
 kb stats
 kb config
-kb doctor
+kb export [path]
+kb import <tarball>
 kb rebuild
 kb clean
 ```
 
+`kb add` supports `--file`, `--url`, `--clipboard`, `--dry-run`, and `--json`.
+
+`kb find` without a query opens an interactive browser over all notes. Use note numbers to open, `n`/`p` to move between pages, and `q` to quit.
+
 ## Documentation
 
+- [Architecture and Workflow](docs/architecture.md)
 - [Configuration and Environment Overrides](docs/configuration.md)
-- [AI Formatting and Spend Reporting](docs/ai.md)
+- [AI Organization and Spend Reporting](docs/ai.md)
 - [Viewing Entries](docs/viewer.md)
 - [Releases and Prebuilt Binaries](docs/releases.md)
 - [Tests](README_TESTS.md)

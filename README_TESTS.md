@@ -1,207 +1,42 @@
-# KB - Test Suite
+# KB Test Suite
 
-Targeted test coverage for the most important KB behaviors. The suite is stronger on parsing, indexing, archive safety, provider integration, and edge cases than on presentation-only output.
+The suite is focused on the current capture/retrieval engine: capture, planning, canonical note materialization, retrieval, archive safety, rendering, and platform behavior.
 
 ## Running Tests
 
 ```bash
-cd /path/to/kb
-go test -v ./...
-```
-
-## Test Files
-
-### config_test.go
-Tests for configuration management:
-- Default config generation
-- Save and load config
-- Config with missing fields (defaults)
-- KB path detection
-
-### entry_test.go
-Tests for entry parsing and generation:
-- Entry template creation
-- ID generation from title and category
-- Title case conversion
-- Write and parse entry round-trip
-- Invalid frontmatter handling
-- Entry path generation
-
-### index_test.go
-Tests for index operations:
-- Load and save index
-- Add/update/remove entries
-- Index rebuilding from entries
-- Entry lookup (by ID, by query)
-- Partial query matching
-
-### search_test.go
-Tests for search functionality:
-- Search by tags (single and multiple, case insensitive)
-- Search by category
-- Full-text search in content
-- Full-text search on long lines
-- Tag and category aggregation
-
-### api_test.go
-Tests for AI integration:
-- Pretty option parsing
-- Claude request/response handling
-- ChatGPT/OpenAI request/response handling
-
-### pretty_test.go
-Tests for prettify UX helpers:
-- `--dry-run` and `--diff` parsing
-- Unified diff rendering
-
-### doctor_test.go
-Tests for environment diagnostics:
-- Provider resolution
-- Credential readiness checks
-- Editor/viewer command detection
-
-### viewer_test.go
-Tests for Markdown viewing behavior:
-- Built-in viewer selection (`builtin`, `less`, fallback modes)
-- Default config fallback when no external viewer exists
-- Terminal Markdown rendering without external tools
-
-### cli_integration_test.go
-Black-box tests against the compiled binary:
-- `init` + `add` with `auto_update_index=false`
-- `clean` with a corrupt index
-- `doctor` output for missing provider credentials
-- `show` falling back to the built-in renderer when the configured viewer is unavailable
-- `pretty --dry-run --diff`
-- `stats` without `OPENAI_ADMIN_KEY`
-
-### archive_test.go
-Tests for archive safety:
-- Export excludes the target archive itself
-- Import rejects path traversal entries
-- Import rebuilds the index correctly
-
-### edge_cases_test.go
-**Critical security and robustness tests:**
-
-#### Security Tests
-- **Path traversal prevention**: Validates that malicious paths cannot escape kbPath
-- **Special characters in input**: Tests unicode, emojis, special chars in tags and titles
-- **Empty/whitespace queries**: Ensures no crashes on edge case inputs
-
-#### Robustness Tests
-- **Malformed frontmatter**: Invalid YAML, missing delimiters, empty frontmatter
-- **Large content**: 1MB+ entries to test memory handling
-- **Concurrent operations**: Tests for race conditions in index updates
-- **File permission errors**: Handles read-only directories gracefully
-- **Index corruption**: Recovers from corrupted JSON
-- **Duplicate IDs**: Handles ID conflicts correctly
-- **Time edge cases**: Zero times, invalid timestamps
-
-## Bugs Found and Fixed
-
-### Critical Security Issues
-1. **Path Traversal Vulnerability** (FIXED)
-   - GetEntryPath allowed `../../../etc/passwd` escapes
-   - Fixed with path sanitization and validation
-
-### Data Integrity Issues
-2. **Invalid Frontmatter Accepted** (FIXED)
-   - Parser accepted entries without proper frontmatter delimiters
-   - Fixed with strict validation
-
-3. **Missing Title Validation** (FIXED)
-   - Entries without titles were accepted
-   - Fixed by requiring title field
-
-### Functionality Bugs
-4. **TitleCase Broken** (FIXED)
-   - Didn't convert `-` and `_` to spaces
-   - Fixed to properly handle separators
-
-5. **Content Length Mismatch** (FIXED)
-   - Inconsistent newline handling
-   - Fixed with consistent TrimSpace behavior
-
-6. **Category Inference** (FIXED)
-   - Categories not inferred from file path
-   - Fixed to extract from entries/category/file.md pattern
-
-## Coverage Notes
-
-The suite intentionally mixes:
-- unit tests for parsing, config, indexing, search, providers, and helpers
-- edge-case tests for malformed input and path traversal
-- black-box CLI tests for the highest-risk command flows
-
-Coverage is not “complete” across every CLI printing path. `main.go` is partially exercised through binary-level tests instead of only statement coverage.
-
-## Coverage by Module
-
-| Module | Tests | Coverage Area |
-|--------|-------|---------------|
-| config.go | Unit tests | Config lifecycle, defaults, path/env overrides |
-| entry.go | Unit tests | Parsing, writing, ID generation, frontmatter edge cases |
-| index.go | Unit tests | CRUD operations, rebuilding, lookups |
-| search.go | Unit tests | Tags, categories, full-text, aggregation, long lines |
-| api.go / pretty.go | Unit tests | Provider parsing, OpenAI/Claude integration, dry-run/diff helpers |
-| archive.go | Unit tests | Export/import behavior and safety |
-| doctor.go | Unit tests | Environment and provider diagnostics |
-| main.go | CLI integration tests | Command flows and regressions in the compiled binary |
-
-## Running Specific Tests
-
-```bash
-# Run specific test file
-go test -v -run TestConfigFile
-
-# Run specific test function
-go test -v -run TestPathTraversalPrevention
-
-# Run with race detector
+go test ./...
 go test -race ./...
-
-# Run only the CLI integration tests
-go test -run 'TestCLI' ./...
-
-# Generate coverage report
-go test -coverprofile=coverage.out ./...
-go tool cover -html=coverage.out
+go vet ./...
 ```
 
-## Adding New Tests
+## Main Areas
 
-When adding new functionality:
-1. Write the test first (TDD)
-2. Include at least one edge case
-3. Test error paths
-4. Consider security implications
+### Core Workflow
 
-Example test structure:
-```go
-func TestNewFeature(t *testing.T) {
-    // Setup
-    tmpDir := t.TempDir()
+- `add_test.go`: add option parsing and editor-first capture behavior
+- `capture_sources_test.go`: file, URL, clipboard, and stdin capture sources
+- `capture_quality_test.go`: cleanup and canonicalization of captured content
+- `organizer_test.go`: heuristic and provider-backed add planning
+- `store_test.go`: capture/note/op persistence and materialization
+- `find_test.go`: note ranking and retrieval behavior
 
-    // Normal case
-    result := NewFeature(normalInput)
-    if result != expected {
-        t.Errorf("expected %v, got %v", expected, result)
-    }
+### CLI / UX
 
-    // Edge case
-    result = NewFeature(edgeInput)
-    if err == nil {
-        t.Error("expected error for edge case")
-    }
-}
-```
+- `cli_integration_test.go`: black-box tests for `init`, `add`, `find`, `doctor`, `stats`, `clean`, removed-command failures, and viewer fallback
+- `viewer_test.go`: built-in Markdown rendering and paging behavior
+- `doctor_test.go`: environment/provider diagnostics
 
-## Continuous Integration
+### Storage / Safety
 
-Tests should be run:
-- Before every commit
-- On every pull request
-- Before releases
+- `config_test.go`: config defaults, overrides, aliases, and path detection
+- `entry_test.go`: frontmatter parsing and materialized note round-trips
+- `index_test.go`: index persistence and rebuild behavior
+- `archive_test.go`: export/import safety
+- `edge_cases_test.go`: malformed input, path traversal, corruption, concurrency, and large-content cases
 
-All tests must pass before merging to main.
+## Notes
+
+- The suite intentionally mixes unit tests and binary-level CLI tests.
+- Coverage is strongest on capture and retrieval paths, which are the critical behaviors in the current workflow.
+- The old v1 `pretty`/manual-taxonomy workflows are no longer part of the tested surface.
