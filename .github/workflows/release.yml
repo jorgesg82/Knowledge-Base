@@ -47,8 +47,7 @@ jobs:
           CGO_ENABLED=0 GOOS="${GOOS}" GOARCH="${GOARCH}" go build -trimpath -ldflags="-s -w" -o "${stagedir}/kb" .
           cp README.md "${stagedir}/README.md"
 
-          tar -C "${workdir}" -czf "${archive}" "$(basename "${stagedir}")"
-          mv "${archive}" .
+          tar -C "${workdir}" -czf "${GITHUB_WORKSPACE}/${archive}" "$(basename "${stagedir}")"
 
       - name: Upload archive
         uses: actions/upload-artifact@v4
