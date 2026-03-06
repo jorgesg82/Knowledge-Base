@@ -13,11 +13,16 @@ import (
 )
 
 type EntryMetadata struct {
-	Title    string    `yaml:"title"`
-	Tags     []string  `yaml:"tags"`
-	Category string    `yaml:"category"`
-	Created  time.Time `yaml:"created"`
-	Updated  time.Time `yaml:"updated"`
+	NoteID         string    `yaml:"id,omitempty"`
+	Title          string    `yaml:"title"`
+	Aliases        []string  `yaml:"aliases,omitempty"`
+	Summary        string    `yaml:"summary,omitempty"`
+	Tags           []string  `yaml:"tags"`
+	Category       string    `yaml:"category"`
+	Topics         []string  `yaml:"topics,omitempty"`
+	SourceCaptures []string  `yaml:"source_captures,omitempty"`
+	Created        time.Time `yaml:"created"`
+	Updated        time.Time `yaml:"updated"`
 }
 
 type Entry struct {
@@ -94,7 +99,10 @@ func ParseEntry(filePath string) (*Entry, error) {
 
 	contentString := strings.TrimSpace(string(content))
 
-	id := GenerateID(metadata.Category, metadata.Title)
+	id := strings.TrimSpace(metadata.NoteID)
+	if id == "" {
+		id = GenerateID(metadata.Category, metadata.Title)
+	}
 
 	return &Entry{
 		Metadata: metadata,
@@ -158,7 +166,7 @@ func WriteEntry(entry *Entry, filePath string) error {
 		buf.WriteString("\n")
 	}
 
-	if err := os.WriteFile(filePath, buf.Bytes(), 0644); err != nil {
+	if err := writeFileAtomically(filePath, buf.Bytes(), 0644); err != nil {
 		return fmt.Errorf("failed to write entry: %w", err)
 	}
 

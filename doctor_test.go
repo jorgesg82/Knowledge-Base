@@ -22,9 +22,9 @@ func TestCollectDoctorChecksForOpenAI(t *testing.T) {
 	}
 
 	config := &Config{
-		Editor:         "sh",
-		Viewer:         "cat",
-		PrettyProvider: "chatgpt",
+		Editor:     "sh",
+		Viewer:     "cat",
+		AIProvider: "chatgpt",
 	}
 
 	t.Setenv("OPENAI_API_KEY", "test-key")
@@ -35,7 +35,7 @@ func TestCollectDoctorChecksForOpenAI(t *testing.T) {
 	var foundProvider, foundOpenAI bool
 	for _, check := range checks {
 		switch check.Name {
-		case "Pretty provider":
+		case "AI provider":
 			foundProvider = true
 			if !strings.Contains(check.Detail, "resolved=chatgpt") {
 				t.Fatalf("unexpected provider detail: %s", check.Detail)
@@ -66,9 +66,9 @@ func TestCollectDoctorChecksForMissingClaudeConfig(t *testing.T) {
 	}
 
 	config := &Config{
-		Editor:         "sh",
-		Viewer:         "cat",
-		PrettyProvider: "claude",
+		Editor:     "sh",
+		Viewer:     "cat",
+		AIProvider: "claude",
 	}
 
 	t.Setenv("ANTHROPIC_API_KEY", "")

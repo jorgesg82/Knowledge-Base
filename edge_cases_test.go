@@ -270,20 +270,9 @@ func TestSpecialCharactersInTags(t *testing.T) {
 	}
 }
 
-// Test empty index operations
+// Test empty index helpers
 func TestEmptyIndexOperations(t *testing.T) {
 	index := &Index{Entries: []IndexEntry{}}
-
-	// Operations on empty index should not panic
-	results := SearchByTags(index, []string{"tag"})
-	if len(results) != 0 {
-		t.Error("Expected no results from empty index")
-	}
-
-	results = SearchByCategory(index, "category")
-	if len(results) != 0 {
-		t.Error("Expected no results from empty index")
-	}
 
 	entry := FindEntryByID(index, "id")
 	if entry != nil {
@@ -384,37 +373,20 @@ func TestDuplicateIDHandling(t *testing.T) {
 	}
 }
 
-// Test search with empty or whitespace queries
-func TestSearchWithEmptyQueries(t *testing.T) {
-	tmpDir := t.TempDir()
+// Test index behavior on minimal data
+func TestIndexMinimalData(t *testing.T) {
 	index := &Index{
 		Entries: []IndexEntry{
 			{ID: "test", Title: "Test", Category: "test", Tags: []string{"tag"}},
 		},
 	}
 
-	// Empty tag search
-	results := SearchByTags(index, []string{})
-	if len(results) != 1 {
-		t.Errorf("Expected 1 result for empty tag query, got %d", len(results))
+	entry := FindEntryByID(index, "test")
+	if entry == nil {
+		t.Fatal("expected to find existing entry by ID")
 	}
-
-	// Empty category search
-	results = SearchByCategory(index, "")
-	if len(results) != 0 {
-		t.Errorf("Expected empty category search to return 0 results, got %d", len(results))
-	}
-
-	// Empty text search
-	results2, _ := SearchByText(index, tmpDir, "")
-	if len(results2) != 0 {
-		t.Errorf("Expected empty text search to return 0 results, got %d", len(results2))
-	}
-
-	// Whitespace query
-	results = SearchByCategory(index, "   ")
-	if len(results) != 0 {
-		t.Errorf("Expected whitespace category search to return 0 results, got %d", len(results))
+	if entry.Category != "test" {
+		t.Fatalf("expected category test, got %s", entry.Category)
 	}
 }
 

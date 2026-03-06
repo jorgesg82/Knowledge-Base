@@ -17,9 +17,16 @@ type Config struct {
 	Viewer          string `yaml:"viewer"`
 	DefaultCategory string `yaml:"default_category"`
 	AutoUpdateIndex bool   `yaml:"auto_update_index"`
-	PrettyProvider  string `yaml:"pretty_provider"`
-	PrettyMode      string `yaml:"pretty_mode"`
-	PrettyAutoApply bool   `yaml:"pretty_auto_apply"`
+	AIProvider      string `yaml:"ai_provider"`
+}
+
+type persistedConfig struct {
+	KBPath          string `yaml:"kb_path"`
+	Editor          string `yaml:"editor"`
+	Viewer          string `yaml:"viewer"`
+	DefaultCategory string `yaml:"default_category"`
+	AutoUpdateIndex bool   `yaml:"auto_update_index"`
+	AIProvider      string `yaml:"ai_provider"`
 }
 
 func findCommand(names ...string) string {
@@ -33,15 +40,6 @@ func findCommand(names ...string) string {
 
 func defaultEditorCandidates() []string {
 	return []string{"nvim", "vim", "nano"}
-}
-
-func defaultViewerCandidates() []string {
-	switch currentGOOS {
-	case "linux":
-		return []string{"glow", "bat", "batcat", "mdcat", "mdless"}
-	default:
-		return []string{"glow", "bat", "mdcat", "batcat", "mdless"}
-	}
 }
 
 func parseEnvBool(name string) (bool, bool, error) {
@@ -68,23 +66,16 @@ func applyConfigEnvOverrides(config *Config) error {
 	if category := strings.TrimSpace(os.Getenv("KB_DEFAULT_CATEGORY")); category != "" {
 		config.DefaultCategory = category
 	}
-	if provider := strings.TrimSpace(os.Getenv("KB_PRETTY_PROVIDER")); provider != "" {
-		config.PrettyProvider = provider
-	}
-	if mode := strings.TrimSpace(os.Getenv("KB_PRETTY_MODE")); mode != "" {
-		config.PrettyMode = mode
+	if provider := strings.TrimSpace(os.Getenv("KB_AI_PROVIDER")); provider != "" {
+		config.AIProvider = provider
+	} else if provider := strings.TrimSpace(os.Getenv("KB_PRETTY_PROVIDER")); provider != "" {
+		config.AIProvider = provider
 	}
 
 	if autoUpdateIndex, ok, err := parseEnvBool("KB_AUTO_UPDATE_INDEX"); err != nil {
 		return err
 	} else if ok {
 		config.AutoUpdateIndex = autoUpdateIndex
-	}
-
-	if autoApply, ok, err := parseEnvBool("KB_PRETTY_AUTO_APPLY"); err != nil {
-		return err
-	} else if ok {
-		config.PrettyAutoApply = autoApply
 	}
 
 	return nil
@@ -99,10 +90,7 @@ func GetDefaultConfig(kbPath string) *Config {
 		}
 	}
 
-	viewer := findCommand(defaultViewerCandidates()...)
-	if viewer == "" {
-		viewer = builtinViewerName
-	}
+	viewer := builtinViewerName
 
 	return &Config{
 		KBPath:          kbPath,
@@ -110,9 +98,7 @@ func GetDefaultConfig(kbPath string) *Config {
 		Viewer:          viewer,
 		DefaultCategory: "misc",
 		AutoUpdateIndex: true,
-		PrettyProvider:  defaultPrettyProvider(),
-		PrettyMode:      "moderate",
-		PrettyAutoApply: true,
+		AIProvider:      defaultAIProvider(),
 	}
 }
 
@@ -136,6 +122,18 @@ func LoadConfig(kbPath string) (*Config, error) {
 	if err := yaml.Unmarshal(data, &config); err != nil {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
 	}
+	var aliases struct {
+		AIProvider     string `yaml:"ai_provider"`
+		PrettyProvider string `yaml:"pretty_provider"`
+	}
+	if err := yaml.Unmarshal(data, &aliases); err != nil {
+		return nil, fmt.Errorf("failed to parse config aliases: %w", err)
+	}
+	if strings.TrimSpace(aliases.AIProvider) != "" {
+		config.AIProvider = strings.TrimSpace(aliases.AIProvider)
+	} else if strings.TrimSpace(aliases.PrettyProvider) != "" {
+		config.AIProvider = strings.TrimSpace(aliases.PrettyProvider)
+	}
 
 	config.KBPath = kbPath
 
@@ -153,12 +151,19 @@ func SaveConfig(config *Config, kbPath string) error {
 	}
 
 	configPath := filepath.Join(configDir, "config.yml")
-	data, err := yaml.Marshal(config)
+	data, err := yaml.Marshal(persistedConfig{
+		KBPath:          config.KBPath,
+		Editor:          config.Editor,
+		Viewer:          config.Viewer,
+		DefaultCategory: config.DefaultCategory,
+		AutoUpdateIndex: config.AutoUpdateIndex,
+		AIProvider:      config.AIProvider,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
-	if err := os.WriteFile(configPath, data, 0644); err != nil {
+	if err := writeFileAtomically(configPath, data, 0644); err != nil {
 		return fmt.Errorf("failed to write config: %w", err)
 	}
 

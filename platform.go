@@ -17,7 +17,7 @@ func hasClaudeConfig() bool {
 		strings.TrimSpace(os.Getenv("ANTHROPIC_CUSTOM_HEADERS")) != ""
 }
 
-func detectPrettyProviderForPlatform(goos string, openAIConfigured, claudeConfigured bool) PrettyProvider {
+func detectAIProviderForPlatform(goos string, openAIConfigured, claudeConfigured bool) AIProvider {
 	switch {
 	case openAIConfigured && !claudeConfigured:
 		return ProviderChatGPT
@@ -38,11 +38,11 @@ func detectPrettyProviderForPlatform(goos string, openAIConfigured, claudeConfig
 	}
 }
 
-func detectPrettyProvider() PrettyProvider {
-	return detectPrettyProviderForPlatform(currentGOOS, hasOpenAIConfig(), hasClaudeConfig())
+func detectAIProvider() AIProvider {
+	return detectAIProviderForPlatform(currentGOOS, hasOpenAIConfig(), hasClaudeConfig())
 }
 
-func defaultPrettyProvider() string {
+func defaultAIProvider() string {
 	return string(ProviderAuto)
 }
 
@@ -51,5 +51,5 @@ func defaultOpenAIModel() string {
 }
 
 func defaultClaudeModel() string {
-	return "claude-sonnet-4-6"
+	return "claude-sonnet-4-5-20250929"
 }

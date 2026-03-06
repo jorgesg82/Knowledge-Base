@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 )
@@ -76,7 +75,7 @@ func SaveIndex(index *Index, kbPath string) error {
 		return fmt.Errorf("failed to marshal index: %w", err)
 	}
 
-	if err := os.WriteFile(indexPath, data, 0644); err != nil {
+	if err := writeFileAtomically(indexPath, data, 0644); err != nil {
 		return fmt.Errorf("failed to write index: %w", err)
 	}
 
@@ -182,76 +181,4 @@ func FindEntryByID(index *Index, id string) *IndexEntry {
 		}
 	}
 	return nil
-}
-
-func FindEntryByQuery(index *Index, query string) *IndexEntry {
-	index.mu.RLock()
-	defer index.mu.RUnlock()
-
-	for i := range index.Entries {
-		if index.Entries[i].ID == query || index.Entries[i].Title == query {
-			entry := index.Entries[i]
-			return &entry
-		}
-	}
-	return nil
-}
-
-func FindEntriesByPartialQuery(index *Index, query string) []IndexEntry {
-	var matches []IndexEntry
-	queryLower := strings.ToLower(query)
-
-	index.mu.RLock()
-	defer index.mu.RUnlock()
-
-	for _, entry := range index.Entries {
-		idLower := strings.ToLower(entry.ID)
-		titleLower := strings.ToLower(entry.Title)
-
-		if strings.Contains(idLower, queryLower) || strings.Contains(titleLower, queryLower) {
-			matches = append(matches, entry)
-		}
-	}
-
-	return matches
-}
-
-func FindEntryWithInference(index *Index, query string) *IndexEntry {
-	// Try exact match first
-	exactMatch := FindEntryByQuery(index, query)
-	if exactMatch != nil {
-		return exactMatch
-	}
-
-	// Try partial match
-	partialMatches := FindEntriesByPartialQuery(index, query)
-
-	if len(partialMatches) == 0 {
-		return nil
-	}
-
-	if len(partialMatches) == 1 {
-		// Single match - use it directly
-		return &partialMatches[0]
-	}
-
-	// Multiple matches - show selection menu
-	fmt.Printf(Header("Multiple matches found for '%s':")+"\n", query)
-	for i, entry := range partialMatches {
-		num := Dim(fmt.Sprintf("%d.", i+1))
-		category := Cyan(entry.Category)
-		id := Gray(entry.ID)
-		title := Bold(entry.Title)
-		fmt.Printf("  %s %s/%s - %s\n", num, category, id, title)
-	}
-
-	fmt.Print("\n" + Highlight("Select entry number (or 0 to cancel): "))
-	var selection int
-	fmt.Scanln(&selection)
-
-	if selection < 1 || selection > len(partialMatches) {
-		return nil
-	}
-
-	return &partialMatches[selection-1]
 }

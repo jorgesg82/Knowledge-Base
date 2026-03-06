@@ -15,40 +15,48 @@ func printUsage() {
 
 Usage:
   kb init [path]              Initialize new KB (default: current directory)
-  kb add [category/]title     Create new entry
-  kb edit <query>             Edit entry (by ID or title)
-  kb show <query>             Show entry content (with markdown viewer)
-  kb rm <query>               Remove entry
-  kb list [category]          List all entries or by category
-  kb search <text>            Full-text search
-  kb tag <tag> [<tag2>...]    Filter by tags
-  kb tags                     List all tags with counts
-  kb pretty <query>           Prettify entry with AI formatting
-  kb pretty --all             Prettify all entries
+
+Core workflow:
+  kb add [text]               Capture knowledge quickly
+  kb find [query]             Browse or retrieve notes
+
+Maintenance:
+  kb doctor                   Check local KB/runtime health
+  kb stats                    Show KB statistics
   kb export [path]            Export KB to tarball
   kb import <tarball>         Import KB from tarball
-  kb stats                    Show KB statistics
+  kb rebuild                  Rebuild derived metadata
   kb config                   Show configuration
-  kb doctor                   Check local KB/runtime health
-  kb rebuild                  Rebuild index from entries
   kb clean                    Remove KB from current directory
 
-Pretty options:
-  --mode <mode>               Set mode: conservative, moderate, aggressive
-  --provider <name>           Set AI provider: auto, claude, or chatgpt
-  --confirm                   Ask for confirmation before applying
-  --dry-run                   Preview without writing changes
-  --diff                      Show a unified diff of the proposed changes
+Removed commands:
+  kb edit, kb rm, kb list, kb search, kb tag, kb tags, kb pretty, kb show
+
+Add options:
+  --file <path>               Capture content from a file
+  --url <url>                 Fetch and capture content from a URL
+  --clipboard                 Capture current clipboard contents
+  --provider <name>           Set organizer provider: auto, claude, or chatgpt
+  --dry-run                   Preview add plan without writing changes
+  --json                      Print add output as JSON
+
+Find options:
+  --json                      Print selected note/candidates as JSON
+  --raw                       Print raw markdown instead of rendering
+  --synthesize                Answer from the top matching notes
+  --provider <name>           Set synthesis provider: auto, claude, or chatgpt
 
 Examples:
   kb init ~/my-kb
-  kb add linux/ssh-tunneling
-  kb show ssh-tunneling
-  kb tag linux networking
-  kb search "port forwarding"
-  kb pretty ssh --mode conservative
-  kb pretty ssh --provider chatgpt
-  kb pretty --all
+  kb add "how to inspect open ports on macos"
+  kb add
+  kb add --clipboard
+  kb add --file ~/Downloads/snippet.txt
+  kb add --url https://example.com/article
+  kb find "open ports"
+  kb find
+  kb find --json "open ports"
+  kb find --synthesize "ssh tunnel"
   kb export ~/backup/kb.tar.gz
   kb rebuild
   kb clean`)
@@ -76,7 +84,7 @@ func handleInit(args []string) {
 	kbDir := filepath.Join(absPath, ".kb")
 	if _, err := os.Stat(kbDir); err == nil {
 		printWarning("KB already exists at %s", absPath)
-		printInfo("This will reset the index. Use 'kb rebuild' to rebuild from existing entries.")
+		printInfo("This will reset derived metadata. Use 'kb rebuild' to rebuild it from the stored notes and entries.")
 		fmt.Print("Continue? [y/N]: ")
 
 		var response string
@@ -106,17 +114,24 @@ func handleInit(args []string) {
 		os.Exit(1)
 	}
 
+	if err := ensureStoreLayout(absPath); err != nil {
+		fmt.Fprintf(os.Stderr, "Error initializing KB storage: %v\n", err)
+		os.Exit(1)
+	}
+	if _, err := loadOrInitKBState(absPath); err != nil {
+		fmt.Fprintf(os.Stderr, "Error initializing KB state: %v\n", err)
+		os.Exit(1)
+	}
+
 	printSuccess("Initialized KB at %s", absPath)
-	printInfo("Use 'kb add <category/title>' to create your first entry")
+	printInfo("Use 'kb add' to capture your first note")
 }
 
 func handleAdd(args []string) {
-	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "Error: missing entry name")
-		fmt.Fprintln(os.Stderr, "Usage: kb add [category/]title")
-		os.Exit(1)
-	}
+	handleAddCommand(args)
+}
 
+func handleFind(args []string) {
 	kbPath, err := GetKBPath()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -129,313 +144,103 @@ func handleAdd(args []string) {
 		os.Exit(1)
 	}
 
-	parts := strings.SplitN(args[0], "/", 2)
-	var category, title string
-	if len(parts) == 2 {
-		category = parts[0]
-		title = parts[1]
-	} else {
-		category = config.DefaultCategory
-		title = parts[0]
-	}
-
-	entryPath := GetEntryPath(kbPath, category, title)
-
-	if _, err := os.Stat(entryPath); err == nil {
-		fmt.Fprintf(os.Stderr, "Error: entry already exists at %s\n", entryPath)
-		os.Exit(1)
-	}
-
-	entry := CreateEntryTemplate(category, title)
-	if err := WriteEntry(entry, entryPath); err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating entry: %v\n", err)
-		os.Exit(1)
-	}
-
-	cmd := buildEditorCommand(config, kbPath, entryPath)
-
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error opening editor: %v\n", err)
-		os.Exit(1)
-	}
-
-	entry, err = ParseEntry(entryPath)
+	options, err := parseFindOptions(args, config)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to parse entry after editing: %v\n", err)
+		printError("%v", err)
+		fmt.Fprintln(os.Stderr, "Usage: kb find [query]")
+		os.Exit(1)
+	}
+
+	if options.Query == "" {
+		note, candidates, topics, err := resolveBrowseFind(kbPath, options)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading notes: %v\n", err)
+			os.Exit(1)
+		}
+
+		if note != nil {
+			if err := renderResolvedFindNote(kbPath, config, options, note, candidates); err != nil {
+				printError("Failed to open note: %v", err)
+				os.Exit(1)
+			}
+			return
+		}
+
+		if options.JSON {
+			if err := printFindJSON(buildBrowseFindResult(options, nil, candidates, topics)); err != nil {
+				printError("Failed to render find JSON: %v", err)
+				os.Exit(1)
+			}
+			return
+		}
+
+		if isTerminal(os.Stdin) && isTerminal(os.Stdout) {
+			if err := browseNotesInteractively(kbPath, config, options, candidates, topics); err != nil {
+				printError("Failed to browse notes: %v", err)
+				os.Exit(1)
+			}
+			return
+		}
+
+		printBrowseNotes(candidates, topics)
 		return
 	}
 
-	if err := updateIndexWithEntry(config, kbPath, entry); err != nil {
-		fmt.Fprintf(os.Stderr, "Error saving index: %v\n", err)
-		os.Exit(1)
-	}
-	warnIfIndexSkipped(config)
-
-	printSuccess("Created entry: %s/%s", category, entry.ID)
-}
-
-func handleEdit(args []string) {
-	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "Error: missing query")
-		fmt.Fprintln(os.Stderr, "Usage: kb edit <query>")
-		os.Exit(1)
-	}
-
-	kbPath, err := GetKBPath()
+	note, candidates, _, err := resolveCanonicalFind(kbPath, options)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error loading notes: %v\n", err)
 		os.Exit(1)
 	}
 
-	config, err := LoadConfig(kbPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
-		os.Exit(1)
+	if options.Synthesize && len(candidates) > 0 {
+		summary, providerName, model, err := synthesizeFindAnswer(options.Query, candidates, string(options.Provider))
+		if err != nil {
+			printWarning("Find synthesis unavailable: %v", err)
+		} else {
+			result := buildFindResult(options, note, candidates, "synthesized", providerName, model, summary)
+			if options.JSON {
+				if err := printFindJSON(result); err != nil {
+					printError("Failed to render find JSON: %v", err)
+					os.Exit(1)
+				}
+			} else {
+				if err := showMarkdownWithBuiltinRenderer(summary); err != nil {
+					printError("Failed to render synthesized answer: %v", err)
+					os.Exit(1)
+				}
+			}
+			return
+		}
 	}
 
-	index, err := LoadIndex(kbPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading index: %v\n", err)
-		os.Exit(1)
-	}
-
-	query := args[0]
-	indexEntry := FindEntryWithInference(index, query)
-	if indexEntry == nil {
-		printError("No entry found matching: %s", query)
-		os.Exit(1)
-	}
-
-	entryPath := filepath.Join(kbPath, indexEntry.Path)
-
-	cmd := buildEditorCommand(config, kbPath, entryPath)
-
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error opening editor: %v\n", err)
-		os.Exit(1)
-	}
-
-	entry, err := ParseEntry(entryPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to parse entry after editing: %v\n", err)
+	if note != nil {
+		if err := renderResolvedFindNote(kbPath, config, options, note, candidates); err != nil {
+			printError("Failed to open note: %v", err)
+			os.Exit(1)
+		}
 		return
 	}
 
-	if err := refreshIndexFromEntry(config, index, kbPath, entry); err != nil {
-		fmt.Fprintf(os.Stderr, "Error saving index: %v\n", err)
+	if len(candidates) > 0 {
+		if options.JSON {
+			result := buildFindResult(options, nil, candidates, "candidates", "", "", "")
+			if err := printFindJSON(result); err != nil {
+				printError("Failed to render find JSON: %v", err)
+				os.Exit(1)
+			}
+			return
+		}
+
+		printFindCandidates(options.Query, candidates)
 		os.Exit(1)
 	}
-	warnIfIndexSkipped(config)
-
-	printSuccess("Entry updated")
+	printError("No note found matching: %s", options.Query)
+	os.Exit(1)
 }
 
-func handleShow(args []string) {
-	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "Error: missing query")
-		fmt.Fprintln(os.Stderr, "Usage: kb show <query>")
-		os.Exit(1)
-	}
-
-	kbPath, err := GetKBPath()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	config, err := LoadConfig(kbPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
-		os.Exit(1)
-	}
-
-	index, err := LoadIndex(kbPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading index: %v\n", err)
-		os.Exit(1)
-	}
-
-	query := args[0]
-	indexEntry := FindEntryWithInference(index, query)
-	if indexEntry == nil {
-		printError("No entry found matching: %s", query)
-		os.Exit(1)
-	}
-
-	entryPath := filepath.Join(kbPath, indexEntry.Path)
-
-	if err := showEntryWithViewer(config.Viewer, entryPath); err != nil {
-		fmt.Fprintf(os.Stderr, "Error opening viewer: %v\n", err)
-		os.Exit(1)
-	}
-}
-
-func handleRm(args []string) {
-	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "Error: missing query")
-		fmt.Fprintln(os.Stderr, "Usage: kb rm <query>")
-		os.Exit(1)
-	}
-
-	kbPath, err := GetKBPath()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	index, err := LoadIndex(kbPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading index: %v\n", err)
-		os.Exit(1)
-	}
-
-	config, err := LoadConfig(kbPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
-		os.Exit(1)
-	}
-
-	query := args[0]
-	indexEntry := FindEntryWithInference(index, query)
-	if indexEntry == nil {
-		printError("No entry found matching: %s", query)
-		os.Exit(1)
-	}
-
-	entryPath := filepath.Join(kbPath, indexEntry.Path)
-	if err := os.Remove(entryPath); err != nil {
-		fmt.Fprintf(os.Stderr, "Error removing entry: %v\n", err)
-		os.Exit(1)
-	}
-
-	if err := removeEntryFromIndex(config, kbPath, indexEntry.ID); err != nil {
-		fmt.Fprintf(os.Stderr, "Error saving index: %v\n", err)
-		os.Exit(1)
-	}
-	warnIfIndexSkipped(config)
-
-	printSuccess("Removed entry: %s", indexEntry.ID)
-}
-
-func handleList(args []string) {
-	kbPath, err := GetKBPath()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	index, err := LoadIndex(kbPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading index: %v\n", err)
-		os.Exit(1)
-	}
-
-	var results []IndexEntry
-	if len(args) > 0 {
-		category := args[0]
-		results = SearchByCategory(index, category)
-	} else {
-		results = SnapshotEntries(index)
-	}
-
-	PrintSearchResults(results, "")
-}
-
-func handleSearch(args []string) {
-	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "Error: missing search text")
-		fmt.Fprintln(os.Stderr, "Usage: kb search <text>")
-		os.Exit(1)
-	}
-
-	kbPath, err := GetKBPath()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	index, err := LoadIndex(kbPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading index: %v\n", err)
-		os.Exit(1)
-	}
-
-	text := strings.Join(args, " ")
-	results, err := SearchByText(index, kbPath, text)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error searching: %v\n", err)
-		os.Exit(1)
-	}
-
-	PrintTextSearchResults(results)
-}
-
-func handleTag(args []string) {
-	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "Error: missing tag")
-		fmt.Fprintln(os.Stderr, "Usage: kb tag <tag> [<tag2>...]")
-		os.Exit(1)
-	}
-
-	kbPath, err := GetKBPath()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	index, err := LoadIndex(kbPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading index: %v\n", err)
-		os.Exit(1)
-	}
-
-	results := SearchByTags(index, args)
-	PrintSearchResults(results, "")
-}
-
-func handleTags(args []string) {
-	kbPath, err := GetKBPath()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	index, err := LoadIndex(kbPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading index: %v\n", err)
-		os.Exit(1)
-	}
-
-	tagCounts := GetAllTags(index)
-	if len(tagCounts) == 0 {
-		fmt.Println(Dim("No tags found"))
-		return
-	}
-
-	type tagCount struct {
-		tag   string
-		count int
-	}
-	var tags []tagCount
-	for tag, count := range tagCounts {
-		tags = append(tags, tagCount{tag, count})
-	}
-	sort.Slice(tags, func(i, j int) bool {
-		return tags[i].count > tags[j].count
-	})
-
-	fmt.Printf(Header("Tags (%d total):")+"\n", len(tags))
-	for _, tc := range tags {
-		fmt.Printf("  %s %s\n", Cyan(tc.tag), Dim(fmt.Sprintf("(%d)", tc.count)))
-	}
+func handleRemovedCommand(command string) {
+	printError("`kb %s` was removed from the current workflow. Use `kb add` / `kb find`, or use the v1 release if you need the old workflow.", command)
+	os.Exit(1)
 }
 
 func handleExport(args []string) {
@@ -490,30 +295,34 @@ func handleStats(args []string) {
 		os.Exit(1)
 	}
 
-	index, err := LoadIndex(kbPath)
+	stats, err := loadStoreStats(kbPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading index: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error loading store stats: %v\n", err)
 		os.Exit(1)
 	}
 
 	config, _ := LoadConfig(kbPath)
-	tagCounts := GetAllTags(index)
-	categoryCounts := GetAllCategories(index)
 
 	fmt.Println(Header("KB Statistics:"))
-	fmt.Printf("  Total entries: %s\n", Cyan(fmt.Sprintf("%d", len(index.Entries))))
-	fmt.Printf("  Categories: %s\n", Cyan(fmt.Sprintf("%d", len(categoryCounts))))
-	fmt.Printf("  Tags: %s\n", Cyan(fmt.Sprintf("%d", len(tagCounts))))
-	fmt.Printf("  Last updated: %s\n", Dim(index.LastUpdated.Format("2006-01-02 15:04:05")))
+	fmt.Printf("  Total notes: %s\n", Cyan(fmt.Sprintf("%d", stats.Notes)))
+	fmt.Printf("  Captures: %s\n", Cyan(fmt.Sprintf("%d", stats.Captures)))
+	fmt.Printf("  Operations: %s\n", Cyan(fmt.Sprintf("%d", stats.Operations)))
+	fmt.Printf("  Topics: %s\n", Cyan(fmt.Sprintf("%d", stats.Topics)))
+	fmt.Printf("  Aliases: %s\n", Cyan(fmt.Sprintf("%d", stats.Aliases)))
+	if stats.LastUpdated.IsZero() {
+		fmt.Printf("  Last updated: %s\n", Dim("never"))
+	} else {
+		fmt.Printf("  Last updated: %s\n", Dim(stats.LastUpdated.Format("2006-01-02 15:04:05")))
+	}
 
-	if len(categoryCounts) > 0 {
-		fmt.Printf("\n" + Bold("Entries by category:") + "\n")
+	if len(stats.NotesByCategory) > 0 {
+		fmt.Printf("\n" + Bold("Notes by category:") + "\n")
 		type catCount struct {
 			cat   string
 			count int
 		}
 		var cats []catCount
-		for cat, count := range categoryCounts {
+		for cat, count := range stats.NotesByCategory {
 			cats = append(cats, catCount{cat, count})
 		}
 		sort.Slice(cats, func(i, j int) bool {
@@ -525,6 +334,7 @@ func handleStats(args []string) {
 	}
 
 	printOpenAISpendStats(config)
+	printAnthropicSpendStats(config)
 }
 
 func printOpenAISpendStats(config *Config) {
@@ -549,6 +359,28 @@ func printOpenAISpendStats(config *Config) {
 	fmt.Printf("  %s\n", Yellow(fmt.Sprintf("Unavailable (%v)", err)))
 }
 
+func printAnthropicSpendStats(config *Config) {
+	summary, err := FetchAnthropicSpendSummary(time.Now())
+	if err == nil {
+		fmt.Printf("\n" + Bold("Anthropic API spend:") + "\n")
+		fmt.Printf("  Total: %s\n", Cyan(formatCurrencyAmount(summary.Total, summary.Currency)))
+		fmt.Printf("  Last 30 days: %s\n", Cyan(formatCurrencyAmount(summary.Last30Days, summary.Currency)))
+		fmt.Printf("  Today: %s\n", Cyan(formatCurrencyAmount(summary.Today, summary.Currency)))
+		return
+	}
+
+	if errors.Is(err, ErrAnthropicAdminKeyNotSet) {
+		if maybePrintAnthropicSpend(config) {
+			fmt.Printf("\n" + Bold("Anthropic API spend:") + "\n")
+			fmt.Printf("  %s\n", Dim("Unavailable. Set ANTHROPIC_ADMIN_KEY to query organization costs."))
+		}
+		return
+	}
+
+	fmt.Printf("\n" + Bold("Anthropic API spend:") + "\n")
+	fmt.Printf("  %s\n", Yellow(fmt.Sprintf("Unavailable (%v)", err)))
+}
+
 func handleConfig(args []string) {
 	kbPath, err := GetKBPath()
 	if err != nil {
@@ -568,12 +400,10 @@ func handleConfig(args []string) {
 	fmt.Printf("  Viewer: %s\n", Cyan(config.Viewer))
 	fmt.Printf("  Default Category: %s\n", Cyan(config.DefaultCategory))
 	fmt.Printf("  Auto Update Index: %s\n", Cyan(fmt.Sprintf("%t", config.AutoUpdateIndex)))
-	fmt.Printf("  Pretty Provider: %s\n", Cyan(config.PrettyProvider))
-	if resolvedProvider, err := ResolvePrettyProvider(config.PrettyProvider); err == nil && resolvedProvider != PrettyProvider(config.PrettyProvider) {
-		fmt.Printf("  Pretty Provider Resolved: %s\n", Cyan(string(resolvedProvider)))
+	fmt.Printf("  AI Provider: %s\n", Cyan(config.AIProvider))
+	if resolvedProvider, err := ResolveAIProvider(config.AIProvider); err == nil && resolvedProvider != AIProvider(config.AIProvider) {
+		fmt.Printf("  AI Provider Resolved: %s\n", Cyan(string(resolvedProvider)))
 	}
-	fmt.Printf("  Pretty Mode: %s\n", Cyan(config.PrettyMode))
-	fmt.Printf("  Pretty Auto Apply: %s\n", Cyan(fmt.Sprintf("%t", config.PrettyAutoApply)))
 }
 
 func handleRebuild(args []string) {
@@ -583,19 +413,53 @@ func handleRebuild(args []string) {
 		os.Exit(1)
 	}
 
-	fmt.Println("Rebuilding index...")
-	index, err := RebuildIndex(kbPath)
+	fmt.Println("Rebuilding derived metadata...")
+	var noteCount, entryCount int
+	err = withKBLock(kbPath, func() error {
+		notes, err := loadCanonicalNotesFromDisk(kbPath)
+		if err != nil {
+			return fmt.Errorf("error loading canonical notes: %w", err)
+		}
+
+		if err := os.MkdirAll(filepath.Join(kbPath, "entries"), 0755); err != nil {
+			return fmt.Errorf("error creating entries directory: %w", err)
+		}
+
+		for _, note := range notes {
+			if note == nil {
+				continue
+			}
+			if err := materializeCanonicalNote(kbPath, note); err != nil {
+				return fmt.Errorf("error materializing note %s: %w", note.ID, err)
+			}
+			if err := saveCanonicalNoteRecord(kbPath, note); err != nil {
+				return fmt.Errorf("error saving canonical note %s: %w", note.ID, err)
+			}
+		}
+
+		manifest := canonicalNoteManifestEntriesFromNotes(notes)
+		if err := saveCanonicalNotesManifest(kbPath, manifest); err != nil {
+			return fmt.Errorf("error saving notes manifest: %w", err)
+		}
+
+		index, err := RebuildIndex(kbPath)
+		if err != nil {
+			return fmt.Errorf("error rebuilding index: %w", err)
+		}
+		if err := SaveIndex(index, kbPath); err != nil {
+			return fmt.Errorf("error saving index: %w", err)
+		}
+
+		noteCount = len(notes)
+		entryCount = len(index.Entries)
+		return nil
+	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error rebuilding index: %v\n", err)
+		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
 	}
 
-	if err := SaveIndex(index, kbPath); err != nil {
-		fmt.Fprintf(os.Stderr, "Error saving index: %v\n", err)
-		os.Exit(1)
-	}
-
-	printSuccess("Rebuilt index with %d entries", len(index.Entries))
+	printSuccess("Rebuilt derived metadata for %d notes and %d entries", noteCount, entryCount)
 }
 
 func handleClean(args []string) {
@@ -605,7 +469,7 @@ func handleClean(args []string) {
 		os.Exit(1)
 	}
 
-	entryCount, err := loadIndexedEntryCount(kbPath)
+	entryCount, err := loadCanonicalNoteCount(kbPath)
 	if err != nil {
 		warnIfCleanCountUnavailable(err)
 		entryCount = 0
@@ -613,7 +477,7 @@ func handleClean(args []string) {
 
 	printWarning("This will delete the KB at %s", kbPath)
 	if entryCount > 0 {
-		printWarning("This KB contains %d entries that will be lost!", entryCount)
+		printWarning("This KB contains %d notes that will be lost!", entryCount)
 	}
 	fmt.Print("Are you sure? Type 'yes' to confirm: ")
 
@@ -658,19 +522,21 @@ func main() {
 	case "add":
 		handleAdd(args)
 	case "edit":
-		handleEdit(args)
+		handleRemovedCommand(command)
+	case "find":
+		handleFind(args)
 	case "show":
-		handleShow(args)
+		handleRemovedCommand(command)
 	case "rm":
-		handleRm(args)
+		handleRemovedCommand(command)
 	case "list":
-		handleList(args)
+		handleRemovedCommand(command)
 	case "search":
-		handleSearch(args)
+		handleRemovedCommand(command)
 	case "tag":
-		handleTag(args)
+		handleRemovedCommand(command)
 	case "tags":
-		handleTags(args)
+		handleRemovedCommand(command)
 	case "export":
 		handleExport(args)
 	case "import":
@@ -686,7 +552,7 @@ func main() {
 	case "clean":
 		handleClean(args)
 	case "pretty":
-		handlePretty(args)
+		handleRemovedCommand(command)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", command)
 		printUsage()

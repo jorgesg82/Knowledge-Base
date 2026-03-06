@@ -56,22 +56,7 @@ func showEntryWithBuiltinRenderer(entryPath string) error {
 		return fmt.Errorf("failed to read entry: %w", err)
 	}
 
-	rendered, err := renderMarkdownForTerminal(builtinViewerMarkdown(entryPath, string(content)))
-	if err != nil {
-		return fmt.Errorf("failed to render markdown: %w", err)
-	}
-
-	if shouldUsePager() {
-		return pageRenderedMarkdown(rendered)
-	}
-
-	if _, err := fmt.Fprint(os.Stdout, rendered); err != nil {
-		return err
-	}
-	if !strings.HasSuffix(rendered, "\n") {
-		_, err = fmt.Fprintln(os.Stdout)
-	}
-	return err
+	return showMarkdownWithBuiltinRenderer(builtinViewerMarkdown(entryPath, string(content)))
 }
 
 func builtinViewerMarkdown(entryPath, rawContent string) string {
@@ -139,6 +124,25 @@ func renderMarkdownForTerminal(content string) (string, error) {
 	}
 
 	return renderer.Render(content)
+}
+
+func showMarkdownWithBuiltinRenderer(markdown string) error {
+	rendered, err := renderMarkdownForTerminal(markdown)
+	if err != nil {
+		return fmt.Errorf("failed to render markdown: %w", err)
+	}
+
+	if shouldUsePager() {
+		return pageRenderedMarkdown(rendered)
+	}
+
+	if _, err := fmt.Fprint(os.Stdout, rendered); err != nil {
+		return err
+	}
+	if !strings.HasSuffix(rendered, "\n") {
+		_, err = fmt.Fprintln(os.Stdout)
+	}
+	return err
 }
 
 func markdownRenderWidth() int {

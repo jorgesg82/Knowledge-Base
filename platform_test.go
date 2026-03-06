@@ -2,13 +2,13 @@ package main
 
 import "testing"
 
-func TestDetectPrettyProviderForPlatform(t *testing.T) {
+func TestDetectAIProviderForPlatform(t *testing.T) {
 	tests := []struct {
 		name             string
 		goos             string
 		openAIConfigured bool
 		claudeConfigured bool
-		want             PrettyProvider
+		want             AIProvider
 	}{
 		{
 			name:             "darwin prefers openai when both absent",
@@ -42,15 +42,15 @@ func TestDetectPrettyProviderForPlatform(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := detectPrettyProviderForPlatform(tt.goos, tt.openAIConfigured, tt.claudeConfigured)
+			got := detectAIProviderForPlatform(tt.goos, tt.openAIConfigured, tt.claudeConfigured)
 			if got != tt.want {
-				t.Fatalf("detectPrettyProviderForPlatform() = %s, want %s", got, tt.want)
+				t.Fatalf("detectAIProviderForPlatform() = %s, want %s", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestResolvePrettyProviderAuto(t *testing.T) {
+func TestResolveAIProviderAuto(t *testing.T) {
 	originalGOOS := currentGOOS
 	currentGOOS = "linux"
 	t.Cleanup(func() {
@@ -61,9 +61,9 @@ func TestResolvePrettyProviderAuto(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("ANTHROPIC_CUSTOM_HEADERS", "")
 
-	provider, err := ResolvePrettyProvider("auto")
+	provider, err := ResolveAIProvider("auto")
 	if err != nil {
-		t.Fatalf("ResolvePrettyProvider failed: %v", err)
+		t.Fatalf("ResolveAIProvider failed: %v", err)
 	}
 
 	if provider != ProviderClaude {

@@ -57,17 +57,66 @@ func collectDoctorChecks(kbPath string, config *Config) []DoctorCheck {
 		})
 	}
 
-	if index, err := LoadIndex(kbPath); err == nil {
+	if stats, err := loadStoreStats(kbPath); err == nil {
 		checks = append(checks, DoctorCheck{
-			Name:   "Index",
+			Name:   "Store",
 			OK:     true,
-			Detail: fmt.Sprintf("%d entries", len(SnapshotEntries(index))),
+			Detail: fmt.Sprintf("%d notes, %d captures, %d ops", stats.Notes, stats.Captures, stats.Operations),
 		})
 	} else {
 		checks = append(checks, DoctorCheck{
-			Name:   "Index",
+			Name:   "Store",
 			OK:     false,
 			Detail: err.Error(),
+		})
+	}
+
+	if missing, err := countMissingMaterializedNotes(kbPath); err == nil {
+		checks = append(checks, DoctorCheck{
+			Name:   "Materialized notes",
+			OK:     missing == 0,
+			Detail: fmt.Sprintf("%d missing", missing),
+		})
+	} else {
+		checks = append(checks, DoctorCheck{
+			Name:   "Materialized notes",
+			OK:     false,
+			Detail: err.Error(),
+		})
+	}
+
+	manifestPath := filepath.Join(kbPath, ".kb", notesManifestFileName)
+	if info, err := os.Stat(manifestPath); err == nil && !info.IsDir() {
+		checks = append(checks, DoctorCheck{
+			Name:   "Notes manifest",
+			OK:     true,
+			Detail: manifestPath,
+		})
+	} else {
+		checks = append(checks, DoctorCheck{
+			Name:   "Notes manifest",
+			OK:     false,
+			Detail: manifestPath + " missing",
+		})
+	}
+
+	if state, err := loadKBStateIfPresent(kbPath); err == nil && state != nil {
+		checks = append(checks, DoctorCheck{
+			Name:   "State",
+			OK:     true,
+			Detail: fmt.Sprintf("version=%d captures=%d notes=%d ops=%d", state.Version, state.LastCaptureSeq, state.LastNoteSeq, state.LastOperationSeq),
+		})
+	} else if err != nil {
+		checks = append(checks, DoctorCheck{
+			Name:   "State",
+			OK:     false,
+			Detail: err.Error(),
+		})
+	} else {
+		checks = append(checks, DoctorCheck{
+			Name:   "State",
+			OK:     false,
+			Detail: "state.json missing",
 		})
 	}
 
@@ -100,18 +149,18 @@ func collectDoctorChecks(kbPath string, config *Config) []DoctorCheck {
 			})
 		}
 
-		resolvedProvider, err := ResolvePrettyProvider(config.PrettyProvider)
+		resolvedProvider, err := ResolveAIProvider(config.AIProvider)
 		if err != nil {
 			checks = append(checks, DoctorCheck{
-				Name:   "Pretty provider",
+				Name:   "AI provider",
 				OK:     false,
 				Detail: err.Error(),
 			})
 		} else {
 			checks = append(checks, DoctorCheck{
-				Name:   "Pretty provider",
+				Name:   "AI provider",
 				OK:     true,
-				Detail: fmt.Sprintf("configured=%s resolved=%s", config.PrettyProvider, resolvedProvider),
+				Detail: fmt.Sprintf("configured=%s resolved=%s", config.AIProvider, resolvedProvider),
 			})
 
 			switch resolvedProvider {
@@ -147,6 +196,30 @@ func collectDoctorChecks(kbPath string, config *Config) []DoctorCheck {
 	}
 
 	return checks
+}
+
+func countMissingMaterializedNotes(kbPath string) (int, error) {
+	notes, err := loadCanonicalNoteManifest(kbPath)
+	if err != nil {
+		return 0, err
+	}
+
+	missing := 0
+	for _, note := range notes {
+		if note == nil || strings.TrimSpace(note.MaterializedPath) == "" {
+			missing++
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(kbPath, note.MaterializedPath)); err != nil {
+			if os.IsNotExist(err) {
+				missing++
+				continue
+			}
+			return 0, err
+		}
+	}
+
+	return missing, nil
 }
 
 func printDoctorChecks(checks []DoctorCheck) {

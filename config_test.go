@@ -3,10 +3,29 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
+func clearConfigOverrideEnv(t *testing.T) {
+	t.Helper()
+
+	for _, name := range []string{
+		"KB_PATH",
+		"KB_EDITOR",
+		"KB_VIEWER",
+		"KB_DEFAULT_CATEGORY",
+		"KB_AUTO_UPDATE_INDEX",
+		"KB_AI_PROVIDER",
+		"KB_PRETTY_PROVIDER",
+	} {
+		t.Setenv(name, "")
+	}
+}
+
 func TestGetDefaultConfig(t *testing.T) {
+	clearConfigOverrideEnv(t)
+
 	config := GetDefaultConfig("/test/path")
 
 	if config.KBPath != "/test/path" {
@@ -21,20 +40,14 @@ func TestGetDefaultConfig(t *testing.T) {
 		t.Error("Expected AutoUpdateIndex to be true")
 	}
 
-	if config.PrettyMode != "moderate" {
-		t.Errorf("Expected PrettyMode moderate, got %s", config.PrettyMode)
-	}
-
-	if config.PrettyProvider != "auto" {
-		t.Errorf("Expected PrettyProvider auto, got %s", config.PrettyProvider)
-	}
-
-	if !config.PrettyAutoApply {
-		t.Error("Expected PrettyAutoApply to be true")
+	if config.AIProvider != "auto" {
+		t.Errorf("Expected AIProvider auto, got %s", config.AIProvider)
 	}
 }
 
 func TestGetDefaultConfigFallsBackToBuiltinViewer(t *testing.T) {
+	clearConfigOverrideEnv(t)
+
 	t.Setenv("EDITOR", "nvim")
 	t.Setenv("PATH", t.TempDir())
 
@@ -45,6 +58,8 @@ func TestGetDefaultConfigFallsBackToBuiltinViewer(t *testing.T) {
 }
 
 func TestSaveAndLoadConfig(t *testing.T) {
+	clearConfigOverrideEnv(t)
+
 	tmpDir := t.TempDir()
 
 	config := &Config{
@@ -53,14 +68,23 @@ func TestSaveAndLoadConfig(t *testing.T) {
 		Viewer:          "less",
 		DefaultCategory: "test",
 		AutoUpdateIndex: false,
-		PrettyProvider:  "chatgpt",
-		PrettyMode:      "aggressive",
-		PrettyAutoApply: false,
+		AIProvider:      "chatgpt",
 	}
 
 	err := SaveConfig(config, tmpDir)
 	if err != nil {
 		t.Fatalf("Failed to save config: %v", err)
+	}
+
+	rawConfig, err := os.ReadFile(filepath.Join(tmpDir, ".kb", "config.yml"))
+	if err != nil {
+		t.Fatalf("Failed to read saved config: %v", err)
+	}
+	if !strings.Contains(string(rawConfig), "ai_provider: chatgpt") {
+		t.Fatalf("expected saved config to persist ai_provider, got %s", string(rawConfig))
+	}
+	if strings.Contains(string(rawConfig), "pretty_provider:") {
+		t.Fatalf("did not expect legacy pretty_provider key in saved config: %s", string(rawConfig))
 	}
 
 	loaded, err := LoadConfig(tmpDir)
@@ -84,20 +108,15 @@ func TestSaveAndLoadConfig(t *testing.T) {
 		t.Error("AutoUpdateIndex mismatch")
 	}
 
-	if loaded.PrettyProvider != config.PrettyProvider {
-		t.Errorf("PrettyProvider mismatch: expected %s, got %s", config.PrettyProvider, loaded.PrettyProvider)
+	if loaded.AIProvider != config.AIProvider {
+		t.Errorf("AIProvider mismatch: expected %s, got %s", config.AIProvider, loaded.AIProvider)
 	}
 
-	if loaded.PrettyMode != config.PrettyMode {
-		t.Errorf("PrettyMode mismatch: expected %s, got %s", config.PrettyMode, loaded.PrettyMode)
-	}
-
-	if loaded.PrettyAutoApply != config.PrettyAutoApply {
-		t.Error("PrettyAutoApply mismatch")
-	}
 }
 
 func TestLoadConfigWithDefaults(t *testing.T) {
+	clearConfigOverrideEnv(t)
+
 	tmpDir := t.TempDir()
 
 	// Save config with missing fields
@@ -119,20 +138,15 @@ func TestLoadConfigWithDefaults(t *testing.T) {
 		t.Error("Expected default auto_update_index to be true")
 	}
 
-	if loaded.PrettyProvider != "auto" {
-		t.Errorf("Expected default pretty provider auto, got %s", loaded.PrettyProvider)
+	if loaded.AIProvider != "auto" {
+		t.Errorf("Expected default AI provider auto, got %s", loaded.AIProvider)
 	}
 
-	if loaded.PrettyMode != "moderate" {
-		t.Errorf("Expected default pretty mode moderate, got %s", loaded.PrettyMode)
-	}
-
-	if !loaded.PrettyAutoApply {
-		t.Error("Expected default pretty_auto_apply to be true")
-	}
 }
 
 func TestLoadConfigNonExistent(t *testing.T) {
+	clearConfigOverrideEnv(t)
+
 	tmpDir := t.TempDir()
 
 	config, err := LoadConfig(tmpDir)
@@ -151,6 +165,8 @@ func TestLoadConfigNonExistent(t *testing.T) {
 }
 
 func TestGetKBPath(t *testing.T) {
+	clearConfigOverrideEnv(t)
+
 	tmpDir := t.TempDir()
 	subDir := filepath.Join(tmpDir, "sub", "dir")
 	os.MkdirAll(subDir, 0755)
@@ -177,6 +193,8 @@ func TestGetKBPath(t *testing.T) {
 }
 
 func TestLoadConfigAppliesEnvironmentOverrides(t *testing.T) {
+	clearConfigOverrideEnv(t)
+
 	tmpDir := t.TempDir()
 
 	configPath := filepath.Join(tmpDir, ".kb", "config.yml")
@@ -190,10 +208,8 @@ func TestLoadConfigAppliesEnvironmentOverrides(t *testing.T) {
 	t.Setenv("KB_EDITOR", "nvim")
 	t.Setenv("KB_VIEWER", "batcat")
 	t.Setenv("KB_DEFAULT_CATEGORY", "work")
-	t.Setenv("KB_PRETTY_PROVIDER", "chatgpt")
-	t.Setenv("KB_PRETTY_MODE", "aggressive")
+	t.Setenv("KB_AI_PROVIDER", "chatgpt")
 	t.Setenv("KB_AUTO_UPDATE_INDEX", "false")
-	t.Setenv("KB_PRETTY_AUTO_APPLY", "false")
 
 	loaded, err := LoadConfig(tmpDir)
 	if err != nil {
@@ -209,24 +225,42 @@ func TestLoadConfigAppliesEnvironmentOverrides(t *testing.T) {
 	if loaded.DefaultCategory != "work" {
 		t.Errorf("Expected default category work, got %s", loaded.DefaultCategory)
 	}
-	if loaded.PrettyProvider != "chatgpt" {
-		t.Errorf("Expected provider chatgpt, got %s", loaded.PrettyProvider)
-	}
-	if loaded.PrettyMode != "aggressive" {
-		t.Errorf("Expected mode aggressive, got %s", loaded.PrettyMode)
+	if loaded.AIProvider != "chatgpt" {
+		t.Errorf("Expected provider chatgpt, got %s", loaded.AIProvider)
 	}
 	if loaded.AutoUpdateIndex {
 		t.Error("Expected auto_update_index to be false after override")
-	}
-	if loaded.PrettyAutoApply {
-		t.Error("Expected pretty_auto_apply to be false after override")
 	}
 	if loaded.KBPath != tmpDir {
 		t.Errorf("Expected KB path %s, got %s", tmpDir, loaded.KBPath)
 	}
 }
 
+func TestLoadConfigSupportsAIProviderAlias(t *testing.T) {
+	clearConfigOverrideEnv(t)
+
+	tmpDir := t.TempDir()
+
+	configPath := filepath.Join(tmpDir, ".kb", "config.yml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+		t.Fatalf("Failed to create config directory: %v", err)
+	}
+	if err := os.WriteFile(configPath, []byte("ai_provider: claude\n"), 0644); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+
+	loaded, err := LoadConfig(tmpDir)
+	if err != nil {
+		t.Fatalf("Failed to load config: %v", err)
+	}
+	if loaded.AIProvider != "claude" {
+		t.Fatalf("expected ai_provider alias to load as claude, got %s", loaded.AIProvider)
+	}
+}
+
 func TestGetKBPathUsesEnvironmentOverride(t *testing.T) {
+	clearConfigOverrideEnv(t)
+
 	tmpDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(tmpDir, ".kb"), 0755); err != nil {
 		t.Fatalf("Failed to create .kb directory: %v", err)

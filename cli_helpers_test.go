@@ -63,17 +63,17 @@ func TestUpdateIndexWithEntryRespectsAutoUpdateIndex(t *testing.T) {
 	}
 }
 
-func TestLoadIndexedEntryCountReturnsErrorForCorruptIndex(t *testing.T) {
+func TestLoadCanonicalNoteCountReturnsZeroWithoutNotes(t *testing.T) {
 	tmpDir := t.TempDir()
-	indexPath := filepath.Join(tmpDir, ".kb", "index.json")
-	if err := os.MkdirAll(filepath.Dir(indexPath), 0755); err != nil {
-		t.Fatalf("Failed to create .kb directory: %v", err)
-	}
-	if err := os.WriteFile(indexPath, []byte("{ invalid json "), 0644); err != nil {
-		t.Fatalf("Failed to write corrupt index: %v", err)
+	if err := ensureStoreLayout(tmpDir); err != nil {
+		t.Fatalf("failed to initialize store layout: %v", err)
 	}
 
-	if _, err := loadIndexedEntryCount(tmpDir); err == nil {
-		t.Fatal("expected corrupt index to return an error")
+	count, err := loadCanonicalNoteCount(tmpDir)
+	if err != nil {
+		t.Fatalf("loadCanonicalNoteCount failed: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected zero canonical notes, got %d", count)
 	}
 }
