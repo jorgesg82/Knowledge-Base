@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -273,55 +272,7 @@ func handleShow(args []string) {
 
 	entryPath := filepath.Join(kbPath, indexEntry.Path)
 
-	// Configure viewer with appropriate pager flags
-	var cmd *exec.Cmd
-	viewerBase := filepath.Base(config.Viewer)
-
-	switch viewerBase {
-	case "glow":
-		cmd = exec.Command(config.Viewer, "-p", entryPath)
-	case "bat", "batcat":
-		cmd = exec.Command(config.Viewer, "--paging=always", entryPath)
-	case "mdcat":
-		// mdcat doesn't have a built-in pager, pipe to less
-		mdcatCmd := exec.Command(config.Viewer, entryPath)
-		lessCmd := exec.Command("less", "-R")
-
-		pipe, err := mdcatCmd.StdoutPipe()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error creating pipe: %v\n", err)
-			os.Exit(1)
-		}
-
-		lessCmd.Stdin = pipe
-		lessCmd.Stdout = os.Stdout
-		lessCmd.Stderr = os.Stderr
-		mdcatCmd.Stderr = os.Stderr
-
-		if err := lessCmd.Start(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error starting less: %v\n", err)
-			os.Exit(1)
-		}
-		if err := mdcatCmd.Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error running mdcat: %v\n", err)
-			os.Exit(1)
-		}
-		pipe.Close()
-		if err := lessCmd.Wait(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error waiting for less: %v\n", err)
-			os.Exit(1)
-		}
-		return
-	default:
-		// For less, mdless, or any other viewer, just run it normally
-		cmd = exec.Command(config.Viewer, entryPath)
-	}
-
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
+	if err := showEntryWithViewer(config.Viewer, entryPath); err != nil {
 		fmt.Fprintf(os.Stderr, "Error opening viewer: %v\n", err)
 		os.Exit(1)
 	}

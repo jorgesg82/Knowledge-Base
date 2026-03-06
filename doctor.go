@@ -19,6 +19,9 @@ func resolveCommandPath(name string) (string, error) {
 	if name == "" {
 		return "", fmt.Errorf("not configured")
 	}
+	if isBuiltinViewer(name) {
+		return builtinViewerName + " renderer", nil
+	}
 
 	if strings.ContainsRune(name, os.PathSeparator) {
 		if _, err := os.Stat(name); err != nil {
@@ -92,8 +95,8 @@ func collectDoctorChecks(kbPath string, config *Config) []DoctorCheck {
 		} else {
 			checks = append(checks, DoctorCheck{
 				Name:   "Viewer",
-				OK:     false,
-				Detail: fmt.Sprintf("%s (%v)", config.Viewer, err),
+				OK:     true,
+				Detail: fmt.Sprintf("%s unavailable, using %s renderer fallback", config.Viewer, builtinViewerName),
 			})
 		}
 

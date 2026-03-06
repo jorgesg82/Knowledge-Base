@@ -101,7 +101,7 @@ func GetDefaultConfig(kbPath string) *Config {
 
 	viewer := findCommand(defaultViewerCandidates()...)
 	if viewer == "" {
-		viewer = "less"
+		viewer = builtinViewerName
 	}
 
 	return &Config{
