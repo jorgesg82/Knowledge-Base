@@ -19,7 +19,7 @@ Build locally:
 go build -o kb
 ```
 
-Or download a prebuilt binary from a GitHub release. See [docs/releases.md](/Users/jsaegar/kb/docs/releases.md).
+Or download a prebuilt binary from a GitHub release. See [docs/releases.md](docs/releases.md).
 
 Add the directory containing `kb` to your `PATH`:
 
@@ -77,8 +77,8 @@ kb clean
 
 ## Documentation
 
-- [Configuration and Environment Overrides](/Users/jsaegar/kb/docs/configuration.md)
-- [AI Formatting and Spend Reporting](/Users/jsaegar/kb/docs/ai.md)
-- [Viewing Entries](/Users/jsaegar/kb/docs/viewer.md)
-- [Releases and Prebuilt Binaries](/Users/jsaegar/kb/docs/releases.md)
-- [Tests](/Users/jsaegar/kb/README_TESTS.md)
+- [Configuration and Environment Overrides](docs/configuration.md)
+- [AI Formatting and Spend Reporting](docs/ai.md)
+- [Viewing Entries](docs/viewer.md)
+- [Releases and Prebuilt Binaries](docs/releases.md)
+- [Tests](README_TESTS.md)
